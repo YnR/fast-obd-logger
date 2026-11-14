@@ -42,6 +42,7 @@
       <option value="0">ECU 1 only (engine, 7E0)</option>
       <option value="1">ECU 2 only (7E1)</option>
     </select>
+    <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option></select>
   </div>
   <p id="status">Not connected.</p>
   <details>
@@ -53,14 +54,43 @@
   </details>
 </div>
 
-<div class="card">
+<div class="card" id="normalCard">
   <b>Channels</b> <small>(first 6 ticked are polled every cycle; the rest are rotated in)</small>
   <div id="pidList"></div>
 </div>
 
-<div class="card">
+<div class="card" id="exploreCard" style="display:none">
+  <b>Exploratory mode</b> <small>read-only requests to look for gear / lock-up data</small>
+  <p><small>1) Parked, ignition on: tap <b>Sweep</b> to test every request below once. 2) Choose which ECU to log, then <b>Start logging</b> to record the raw replies that answered, plus pedal, RPM and speed, while you shift P-R-N-D and drive. 3) Save the CSV and the sweep report.</small></p>
+  <textarea id="candList" rows="11" spellcheck="false" style="width:100%;font:12px ui-monospace,monospace;background:#232a33;color:var(--fg);border:0;border-radius:8px;padding:8px">
+# one request per line: [7E0|7E1] hex bytes   (only services 01, 09, 22 are allowed)
+# controls: identification reads other owners report working on the transmission ECU (not live data)
+7E1 22 F189
+7E1 22 F191
+7E1 22 F187
+# candidates (unverified; several are reported unsupported on related Hyundai/Kia transmissions)
+7E1 22 01 01
+7E1 22 01 02
+7E1 22 E0 01
+7E1 22 E0 02
+7E1 22 11 01
+7E1 22 19 40
+7E1 22 11 04
+7E1 22 19 44
+7E1 22 11 02
+7E1 22 19 41
+7E0 22 E0 01
+7E0 22 E0 02
+</textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="sweepGo" disabled>Sweep (parked)</button>
+    <button id="sweepSave" disabled>Save sweep report</button>
+    <select id="exTx"><option value="7E1">Log ECU 2 (7E1)</option><option value="7E0">Log ECU 1 (7E0)</option></select>
+  </div>
+  <pre id="sweepOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
+  <div id="exGrid" class="grid"></div>
   <details>
-    <summary>Probe (car parked, read-only)</summary>
+    <summary>Single probe (car parked, read-only)</summary>
     <p><small>Sends one read request (services 01, 09 or 22 only) and shows the raw reply. Nothing else is allowed. Don't use while driving or while logging.</small></p>
     <div class="row">
       <select id="probeEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1" selected>ECU 2 (7E1)</option></select>
@@ -147,6 +177,30 @@ function parseResp(text){
   }
   return out;
 }
+
+// Generic reply -> bytes (handles ELM multi-frame and "response pending").
+function parseBytes(text){
+  if(!text) return [];
+  const lines = text.split(/[\r\n]+/).map(s=>s.replace(/\s+/g,'').toUpperCase()).filter(Boolean)
+                    .filter(l=>/^[0-9A-F:]+$/.test(l));
+  if(!lines.length) return [];
+  if(lines.some(l=>/^[0-9A-F]:/.test(l))){
+    let hex=''; for(const l of lines){ const m=l.match(/^[0-9A-F]:(.*)$/); if(m) hex+=m[1]; }
+    return hexToBytes(hex);
+  }
+  const pick = lines.find(l=>/^(62|41)/.test(l)) || lines.find(l=>/^7F/.test(l)&&l.substr(4,2)!=='78') || lines[0];
+  return hexToBytes(pick);
+}
+// Classify a reply to a service 01/09/22 request.
+function parseUds(text){
+  const b = parseBytes(text);
+  if(!b.length) return {kind:'none'};
+  if(b[0]===0x7F && b.length>=3) return {kind:'neg', svc:b[1], nrc:b[2]};
+  if(b[0]===0x62 && b.length>=3) return {kind:'ok', did:(b[1]<<8)|b[2], data:b.slice(3), all:b};
+  if(b[0]===0x41 || b[0]===0x49) return {kind:'ok', data:b.slice(2), all:b};
+  return {kind:'other', all:b};
+}
+const hexStr = a => a.map(x=>x.toString(16).toUpperCase().padStart(2,'0')).join('');
 
 function makeGroups(selected){
   const sel = ORDER.filter(p=>selected.includes(p));
@@ -260,13 +314,13 @@ async function connect(){
     nChar.addEventListener('characteristicvaluechanged', onNotify);
     connected=true;
     await initElm();
-    $('btnStart').disabled=false; $('probeGo').disabled=false;
+    $('btnStart').disabled=false; $('probeGo').disabled=false; $('sweepGo').disabled=false;
     $('btnConnect').textContent='Reconnect';
   }catch(e){ setStatus('Connect failed: '+e.message); log('ERR '+e.message); connected=false; }
 }
 function onDisc(){
   connected=false; const was=running; running=false;
-  $('btnStart').disabled=true; $('probeGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  $('btnStart').disabled=true; $('probeGo').disabled=true; $('sweepGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
   log('Disconnected'); saveLocal();
 }
@@ -326,16 +380,34 @@ $('probeGo').onclick=probe;
 
 // ---- logging loop ----
 const HEADER=['t_s','epoch_ms','group',...ORDER.map(p=>PIDS[p].name),'auto_dip','mark','gps_lat','gps_lon','gps_mph','phone_ax','phone_ay','phone_az'];
-function addRow(grp, vals, flags){
+let extraCols=[];   // exploratory raw-reply columns (only ever grows, so older rows stay aligned)
+function addRow(grp, vals, flags, extra){
   const now=performance.now();
   const r=[((now-t0)/1000).toFixed(3), Date.now(), grp];
   for(const p of ORDER) r.push(vals&&vals[p]!==undefined ? +vals[p].toFixed(3) : '');
   r.push(flags.dip||'', flags.mark||'', lastGeo.lat??'', lastGeo.lon??'', lastGeo.mph??'', lastAcc.x??'', lastAcc.y??'', lastAcc.z??'');
+  for(const c of extraCols) r.push(extra&&extra[c]!==undefined ? extra[c] : '');
   rows.push(r); $('rows').textContent=rows.length;
+}
+
+// shared per-sample handling of the base channels (dip detection, plot history, rate)
+function onBase(v, times){
+  const flags={};
+  Object.assign(latest,v);
+  if(v['49']!==undefined){
+    if(prevPed!==null && prevPed>=20 && v['49']<=15.5){ flags.dip=1; dips++; $('dips').textContent=dips; const c=$('c49'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
+    prevPed=v['49'];
+    hist.push({t:performance.now(),ped:v['49'],cmd:latest['4C'],trq:latest['62']});
+    const cut=performance.now()-30000; while(hist.length&&hist[0].t<cut) hist.shift();
+    times.push(performance.now()); while(times.length>20) times.shift();
+    if(times.length>2) $('hz').textContent=((times.length-1)/((times[times.length-1]-times[0])/1000)).toFixed(1);
+  }
+  return flags;
 }
 async function startLogging(){
   if(!connected) return;
-  const sel=selectedPids(); if(!sel.length){ setStatus('Tick at least one channel.'); return; }
+  const explore=$('modeSel').value==='explore';
+  const sel=explore?[]:selectedPids(); if(!explore&&!sel.length){ setStatus('Tick at least one channel.'); return; }
   if(rows.length===0) t0=performance.now(); else if(!t0) t0=performance.now();
   if($('useGps').checked && navigator.geolocation && geoId==null)
     geoId=navigator.geolocation.watchPosition(p=>{lastGeo={lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),mph:p.coords.speed!=null?+(p.coords.speed*2.23694).toFixed(2):''};},()=>{},{enableHighAccuracy:true});
@@ -344,10 +416,11 @@ async function startLogging(){
     window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a) lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)};});
   }
   try{ wakeLock=await navigator.wakeLock?.request('screen'); }catch(e){}
+  if(explore) return runExplore();
   try{ await applyTarget(); }catch(e){ log('Target setup error: '+e.message); }
   const groups=makeGroups(sel);
   const poller=new Poller(send, window.__expect||'', log);
-  running=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
+  running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
   setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
   let rot=1, times=[];
   try{
@@ -356,25 +429,102 @@ async function startLogging(){
       for(const gi of picks){
         if(!running) break;
         const v=await poller.queryGroup(groups[gi]);
-        const flags={};
-        Object.assign(latest,v);
-        if(v['49']!==undefined){
-          if(prevPed!==null && prevPed>=20 && v['49']<=15.5){ flags.dip=1; dips++; $('dips').textContent=dips; const c=$('c49'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
-          prevPed=v['49'];
-          hist.push({t:performance.now(),ped:v['49'],cmd:latest['4C'],trq:latest['62']});
-          const cut=performance.now()-30000; while(hist.length&&hist[0].t<cut) hist.shift();
-          times.push(performance.now()); while(times.length>20) times.shift();
-          if(times.length>2) $('hz').textContent=((times.length-1)/((times[times.length-1]-times[0])/1000)).toFixed(1);
-        }
+        const flags=onBase(v, times);
         if(Object.keys(v).length) addRow(gi, v, flags);
       }
     }
   }catch(e){ log('Loop error: '+e.message); }
-  running=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   try{wakeLock&&wakeLock.release();}catch(e){}
   if(connected) setStatus('Stopped. '+rows.length+' rows logged.');
   saveLocal();
 }
+
+// ---- Exploratory mode ----
+const NRC_TXT={'11':'service not supported','12':'sub-function not supported','13':'bad message length','22':'conditions not correct','31':'request out of range (identifier not supported)','33':'security access denied','7E':'not supported in this session','7F':'service not supported in this session'};
+let sweepLive=[], sweepReport=[], exLatest=[], exLive=[];
+function parseCandidates(text){
+  const list=[], errors=[];
+  for(const line0 of text.split(/\n/)){
+    const line=line0.replace(/#.*/,'').trim().toUpperCase(); if(!line) continue;
+    const tok=line.split(/\s+/); let tx='7E1';
+    if(/^7E[01]$/.test(tok[0])) tx=tok.shift(); else if(/^7[0-9A-F]{2}$/.test(tok[0])){ errors.push(line0.trim()+'  -> only 7E0/7E1 supported'); continue; }
+    const raw=tok.join('');
+    if(!/^(01|09|22)([0-9A-F]{2})+$/.test(raw)){ errors.push(line0.trim()+'  -> blocked (only 01, 09, 22 read requests)'); continue; }
+    list.push({tx,raw});
+  }
+  return {list,errors};
+}
+async function setTarget(tx){ await send('ATSH '+tx); await send('ATCRA '+(tx==='7E0'?'7E8':'7E9')); }
+async function sweep(){
+  if(running||!connected) return;
+  if(window.__proto!=='6'&&window.__proto!=='8'){ $('sweepOut').textContent='Needs 11-bit CAN (protocol 6 or 8). This car reports '+window.__proto+'.'; return; }
+  const {list,errors}=parseCandidates($('candList').value);
+  const out=$('sweepOut'); $('sweepGo').disabled=true; $('sweepSave').disabled=true;
+  sweepLive=[]; sweepReport=['Fast OBD Logger sweep '+new Date().toISOString(),'protocol '+window.__proto,''];
+  const say=l=>{ out.textContent+=l+'\n'; sweepReport.push(l); };
+  out.textContent=''; errors.forEach(say);
+  let cur=null;
+  try{
+    for(const c of list){
+      if(c.tx!==cur){ await setTarget(c.tx); cur=c.tx; }
+      const r=await send(c.raw,4000);
+      const u=parseUds(r);
+      const lbl=c.tx+' '+c.raw.match(/.{2}/g).join(' ');
+      if(u.kind==='ok'){ sweepLive.push(c); say(lbl+'  OK ('+u.data.length+' data bytes)  '+hexStr(u.all)); }
+      else if(u.kind==='neg'){ const n=u.nrc.toString(16).toUpperCase().padStart(2,'0'); say(lbl+'  refused: '+(NRC_TXT[n]||'code '+n)); }
+      else if(u.kind==='other') say(lbl+'  odd reply: '+hexStr(u.all));
+      else say(lbl+'  no reply');
+    }
+  }catch(e){ say('Error: '+e.message); }
+  try{ await applyTarget(); }catch(e){}
+  say(''); say(sweepLive.length+' of '+list.length+' requests answered with data.');
+  log('Sweep: '+sweepLive.length+'/'+list.length+' answered');
+  $('sweepGo').disabled=false; $('sweepSave').disabled=false;
+}
+async function runExplore(){
+  const tx=$('exTx').value;
+  exLive=sweepLive.filter(c=>c.tx===tx);
+  if(!exLive.length){ setStatus('Run the sweep first (parked). No '+tx+' request has answered yet.'); try{wakeLock&&wakeLock.release();}catch(e){} return; }
+  const cols=exLive.map(c=>tx+'_'+c.raw);
+  for(const c of cols) if(!extraCols.includes(c)) extraCols.push(c);
+  exLatest=exLive.map(()=>'');
+  $('exGrid').innerHTML=exLive.map((c,k)=>'<div class="cell"><span>'+tx+' '+c.raw+'</span><b id="x'+k+'" style="font-size:11px;word-break:break-all">–</b></div>').join('');
+  const base = tx==='7E1' ? ['49','0C','0D','11','42'] : ['49','4A','4C','62','0C','0D'];
+  const groups=makeGroups(base);
+  let times=[];
+  try{
+    await setTarget(tx);
+    const expect=' 1';
+    const poller=new Poller(send, expect, log);
+    running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
+    setStatus('Exploring '+tx+': '+exLive.length+' raw request(s) + base channels'); log('Explore '+tx+' '+exLive.map(c=>c.raw).join(','));
+    while(running){
+      for(const g of groups){
+        if(!running) break;
+        const v=await poller.queryGroup(g);
+        const flags=onBase(v, times);
+        if(Object.keys(v).length) addRow('B', v, flags);
+      }
+      for(let k=0;k<exLive.length&&running;k++){
+        const r=await send(exLive[k].raw+expect,1500);
+        const u=parseUds(r);
+        const hex = u.kind==='ok' ? hexStr(u.data) : (u.kind==='neg' ? 'NRC'+u.nrc.toString(16).toUpperCase().padStart(2,'0') : '');
+        exLatest[k]=hex;
+        addRow('X'+k, {}, {}, {[cols[k]]:hex});
+      }
+    }
+  }catch(e){ log('Explore error: '+e.message); }
+  running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  try{wakeLock&&wakeLock.release();}catch(e){}
+  try{ await applyTarget(); }catch(e){}
+  if(connected) setStatus('Stopped. '+rows.length+' rows logged.');
+  saveLocal();
+}
+$('sweepGo').onclick=sweep;
+$('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
+$('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCard').style.display=ex?'none':''; $('exploreCard').style.display=ex?'':'none'; $('ecuSel').disabled=ex; };
+
 $('btnStart').onclick=()=>{ if(running){ running=false; } else startLogging(); };
 $('btnConnect').onclick=connect;
 $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
@@ -382,6 +532,7 @@ $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textConte
 // ---- UI refresh ----
 setInterval(()=>{
   for(const p of ORDER){ const v=latest[p]; if(v!==undefined) document.querySelector('#c'+p+' b').textContent = Math.abs(v)>=100?v.toFixed(0):v.toFixed(1); }
+  exLatest.forEach((h,k)=>{ const el=document.getElementById('x'+k); if(el) el.textContent=h?(h.length>40?h.slice(0,40)+'…':h):'–'; });
   draw();
 },250);
 function draw(){
@@ -395,16 +546,17 @@ function draw(){
 }
 
 // ---- CSV save / recover ----
-function csv(){ return [HEADER.join(','),...rows.map(r=>r.join(','))].join('\n'); }
+function csv(){ const H=HEADER.concat(extraCols); return [H.join(','),...rows.map(r=>{ const a=r.slice(); while(a.length<H.length) a.push(''); return a.join(','); })].join('\n'); }
 function saveLocal(){ try{ localStorage.setItem('obdlog_last', csv()); }catch(e){} }
 setInterval(()=>{ if(running) saveLocal(); },20000);
-async function saveCsv(text){
+async function saveFile(text, prefix, ext, mime){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
-  const name=`obd_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.csv`;
-  const file=new File([text],name,{type:'text/csv'});
+  const name=`${prefix}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  const file=new File([text],name,{type:mime});
   try{ if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return; } }catch(e){ if(e.name==='AbortError') return; }
   const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; document.body.appendChild(a); a.click(); a.remove();
 }
+const saveCsv = text => saveFile(text,'obd','csv','text/csv');
 $('btnSave').onclick=()=>saveCsv(csv());
 $('btnRecover').onclick=()=>{ let t=null; try{t=localStorage.getItem('obdlog_last');}catch(e){} if(t) saveCsv(t); else log('Nothing stored.'); };
 if(!navigator.bluetooth) setStatus('This browser has no Web Bluetooth. Open this page in Chrome on Android (https or localhost).');

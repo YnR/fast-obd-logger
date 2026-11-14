@@ -4,6 +4,10 @@ A single-page web app that logs OBD-II data from a **BLE ELM327-style dongle** a
 
 **Use it:** open the published page in **Chrome on Android** (or desktop Chrome), tap *Connect dongle*, pick your adapter, then *Start logging*.
 
+## Modes
+- **Normal**: fast logging of standard channels (pedal, throttle, torque, RPM, speed, etc.).
+- **Exploratory**: with the car parked, *Sweep* tests an editable list of read-only requests (services 01/09/22) against ECU 1 (7E0) or ECU 2 (7E1) and saves a report. *Start logging* then records the raw replies that answered, alongside pedal, RPM and speed, so unknown bytes can be matched to gear changes offline.
+
 ## Features
 - Batches up to 6 PIDs per request (falls back to single requests if the ECU doesn't support it)
 - Optional ECU targeting (engine ECU 7E0 / second ECU 7E1) on 11-bit CAN
