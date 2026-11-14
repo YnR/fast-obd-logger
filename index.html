@@ -135,7 +135,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-h · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-i · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -342,8 +342,9 @@ function pickerOptions(services){
 
 // Is it an ELM327-style OBD adapter? It must answer AT commands with a prompt, and identify itself or accept ATE0.
 async function verifyDongle(){
-  let r=await send('ATZ',3500), banner=(r||'').replace(/\s+/g,' ').trim();
-  if(!r){ r=await send('ATI',2000); banner=(r||'').replace(/\s+/g,' ').trim(); if(!r) return {ok:false, reason:'did not answer OBD adapter commands'}; }
+  // ATI (identify) rather than ATZ: a full reset can make some adapters drop the Bluetooth link.
+  let r=await send('ATI',2500); log('ATI -> '+JSON.stringify(r)); let banner=(r||'').replace(/\s+/g,' ').trim();
+  if(!r){ r=await send('ATZ',3500); log('ATZ -> '+JSON.stringify(r)); banner=(r||'').replace(/\s+/g,' ').trim(); if(!r) return {ok:false, reason:'did not answer OBD adapter commands'}; }
   const known=/ELM|STN|OBDLINK|OBD ?II|V-?LINK|VGATE|ICAR/i.test(banner);
   const e=await send('ATE0',1500);
   if(known || /OK/.test(e||'')){ log('Adapter says: '+(banner||'(no banner)')); return {ok:true,banner}; }
@@ -400,7 +401,7 @@ async function connect(auto, showAll){
 let pickList=null, pickRes=null, nativeConnRes=null;
 if(NATIVE){
   window.__btRx = onData;
-  window.__btClosed = ()=>onDisc();
+  window.__btClosed = (r)=>{ log('Bluetooth link closed: '+(r||'unknown')); setStatus('Link closed: '+(r||'unknown')); onDisc(); };
   window.__btConnected = (ok,msg)=>{ if(nativeConnRes){ const f=nativeConnRes; nativeConnRes=null; f({ok:ok,msg:msg}); } };
 }
 function pickPaired(list){ return new Promise(res=>{ pickList=list; pickRes=res; renderDevices(); }); }

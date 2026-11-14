@@ -163,6 +163,7 @@ class MainActivity : Activity() {
 
     private fun readLoop(s: BluetoothSocket) {
         val buf = ByteArray(1024)
+        var reason = "adapter closed the link"
         try {
             val ins = s.inputStream
             while (true) {
@@ -170,10 +171,10 @@ class MainActivity : Activity() {
                 if (n < 0) break
                 js("window.__btRx(" + JSONObject.quote(String(buf, 0, n, Charsets.ISO_8859_1)) + ")")
             }
-        } catch (e: IOException) { }
+        } catch (e: IOException) { reason = e.message ?: "read error" }
         if (!selfClose && socket === s) {
             socket = null
-            js("window.__btClosed()")
+            js("window.__btClosed(" + JSONObject.quote(reason) + ")")
         }
     }
 }
