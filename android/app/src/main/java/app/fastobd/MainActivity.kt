@@ -56,6 +56,7 @@ class MainActivity : Activity() {
             }
         }
         web.addJavascriptInterface(Bridge(), "AndroidBT")
+        web.addJavascriptInterface(ScanStatus(), "ScanBT")
         askPermissions()
         val html = assets.open("index.html").bufferedReader().use { it.readText() }
         web.loadDataWithBaseURL("https://fastobd.app/", html, "text/html", "utf-8", null)
@@ -192,6 +193,13 @@ class MainActivity : Activity() {
                 ?: throw IOException("could not create file")
             contentResolver.openOutputStream(uri).use { it!!.write(text.toByteArray(Charsets.UTF_8)) }
             return "Downloads/$name"
+        }
+    }
+
+    inner class ScanStatus {
+        @JavascriptInterface
+        fun scanStatus(text: String, pct: Int, done: Boolean) {
+            KeepAliveService.scanStatus(applicationContext, text, pct.coerceIn(0, 100), done)
         }
     }
 
