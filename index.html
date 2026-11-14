@@ -243,7 +243,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-c · three modes</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-d · new tests</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -849,8 +849,9 @@ async function runExplore(){
 // Data blocks found on this car by the sweeps (read-only service 22).
 // Large blocks that never changed in the first round of parked tests are left out to keep each cycle short.
 const ENG_WIDE=['E001','E002','E003','E004','E005','E006','E009','E00A','E010','E011','E014','E016','E017','E018','E019','E01B','E01D','E01F','E020','E023','E027','E080','E091','E092','E095','E0F1'];
-const SETS = window.__guideReq ? {tcm:window.__guideReq.map(r=>({tx:'7E1',raw:r})), engCore:[], engWide:[]} : {
+const SETS = window.__guideReq ? {tcm:window.__guideReq.map(r=>({tx:'7E1',raw:r})), tcmFast:window.__guideReq.map(r=>({tx:'7E1',raw:r})), engCore:[], engWide:[]} : {
   tcm:     ['2201A0','2201A1','2201A2','2201A3'].map(r=>({tx:'7E1',raw:r})),
+  tcmFast: ['2201A0','2201A1'].map(r=>({tx:'7E1',raw:r})),   // two blocks only, for the fastest rate while driving
   engCore: ['22E001','22E002'].map(r=>({tx:'7E0',raw:r})),
   engWide: ENG_WIDE.map(d=>({tx:'7E0',raw:'22'+d}))
 };
@@ -860,54 +861,72 @@ const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
   {id:'on'+k,  t:(on||what+' ON')+(k>1?' again':'')+'. Do it now, then hold.', hold:secs}]);
 // Parked steps: you tap NEXT (it turns green after "hold" seconds).
 // Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
+// Already identified on this car, so no longer offered as tests: gear lever, manual gate and +/-,
+// brake pedal, gears 1 to 8 and converter slip (see the Monitor decoding above).
 const TESTS={
-  selector:{name:'Gear lever P-R-N-D', where:'parked', mins:1, sets:['tcm','engCore'], steps:()=>[
-    {id:'P',  t:'Foot on the brake. Lever in P.', hold:5},
-    {id:'R',  t:'Shift to R and hold.', hold:5},
-    {id:'N',  t:'Shift to N and hold.', hold:5},
-    {id:'D',  t:'Shift to D and hold.', hold:5},
-    {id:'P2', t:'Back to P and hold.', hold:5}]},
-  manual:{name:'Manual gate + and − (standstill)', where:'parked', mins:1, sets:['tcm','engCore'], steps:()=>[
-    {id:'D',     t:'Foot on the brake. Lever in D.', hold:5},
-    {id:'gate',  t:'Move the lever into the manual gate. Hold.', hold:5},
-    {id:'plus',  t:'Tap + once. Hold.', hold:5},
-    {id:'minus', t:'Tap − once. Hold.', hold:5},
-    {id:'D2',    t:'Back to D. Hold.', hold:5},
-    {id:'P',     t:'Back to P.', hold:3}]},
+  // ---- parked ----
+  pedalsweep:{name:'Pedal sensors sweep', where:'parked', mins:1, sets:['engCore'], steps:()=>[
+    {id:'rest1', t:'Engine OFF, ignition ON. Foot off the pedal. Hold.', hold:5},
+    {id:'press', t:'Press the pedal SLOWLY all the way down, taking about 10 seconds.', hold:10},
+    {id:'release', t:'Release it SLOWLY, taking about 10 seconds.', hold:10},
+    {id:'steady', t:'Hold the pedal steady at about one third.', hold:15},
+    {id:'rest2', t:'Release. Hold.', hold:5}]},
+  ac:{name:'A/C button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('A/C',15)},
+  fan:{name:'Blower fan', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Fan',15,'A/C off. Fan OFF','Fan on HIGH')},
+  lights:{name:'Headlights', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Headlights',15)},
+  defrost:{name:'Rear defrost', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Rear defrost',15)},
   drivemode:{name:'Drive mode button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
     {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:15},
     {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
     {id:'press2',t:'Press DRIVE MODE again now. Hold.', hold:15},
     {id:'press3',t:'Press DRIVE MODE again now. Hold.', hold:15},
     {id:'press4',t:'Press again until it is back where it started. Hold.', hold:15}]},
-  brake:{name:'Brake pedal', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Brake',12,'In P. Foot OFF the brake','Press the brake')},
-  throttle:{name:'Accelerator in Park', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
-    {id:'idle1', t:'In P. Foot off the pedal. Hold.', hold:12},
-    {id:'rev1',  t:'Press gently to about 1500 rpm now. Hold it there.', hold:12},
-    {id:'idle2', t:'Release now. Hold.', hold:12},
-    {id:'rev2',  t:'Press to about 2500 rpm now. Hold it there.', hold:12},
-    {id:'idle3', t:'Release now. Hold.', hold:12}]},
-  ac:{name:'A/C button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('A/C',15)},
+  cruisebtn:{name:'Cruise control button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Cruise',15,'Cruise control switched OFF (no cruise light)','Press the CRUISE button so the cruise light is ON')},
+  parkbrake:{name:'Parking brake', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Parking brake',15,'In P. Parking brake RELEASED','Parking brake APPLIED')},
+  autohold:{name:'Auto Hold button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Auto Hold',15)},
+  esc:{name:'ESC OFF button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('ESC',15,'ESC normal (no ESC OFF light)','Press ESC OFF so the light is ON')},
   steering:{name:'Steering wheel', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Steering',12,'Hands off the wheel','Turn the wheel and keep light pressure on it')},
-  lights:{name:'Headlights', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Headlights',15)},
-  defrost:{name:'Rear defrost', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Rear defrost',15)},
   custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',15)},
   free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
-  drive:{name:'Normal drive (gears)', where:'driving', mins:8, sets:['tcm','engCore'],
-    plan:['Start stopped, lever in D.',
-          'Drive as you normally would for 5 to 10 minutes. Include a few full stops and, if the road allows, 40 to 50 mph.',
-          'You do not touch or look at the phone while moving.',
-          'When you have finished and are stopped, tap anywhere on the screen to end and save.'],
-    steps:()=>[{id:'drive', t:'Recording. Drive normally. TAP when stopped at the end.', say:'Recording. Drive normally. When you have finished and stopped, tap the screen anywhere.', tap:true, hold:60}]},
-  manualdrive:{name:'Manual shifting drive', where:'driving', mins:8, sets:['tcm','engCore'],
-    plan:['Start stopped. Move the lever into the manual gate.',
-          'Drive off and shift up one gear at a time with +, holding each gear for a few seconds, as high as the road allows.',
-          'Then shift back down one gear at a time with −.',
-          'You do not touch the phone while moving. The gear is worked out afterwards from RPM and speed.',
-          'When you are stopped at the end, tap anywhere on the screen to end and save.'],
-    steps:()=>[{id:'manual', t:'Recording. Shift up, then down. TAP when stopped at the end.', say:'Recording. Shift up through the gears, then back down. When you have stopped, tap the screen anywhere.', tap:true, hold:60}]},
-  lockup:{name:'Lock-up at cruise', where:'driving', mins:3, sets:['tcm','engCore'],
+  // ---- driving ----
+  catch:{name:'Catch the hesitation', where:'driving', mins:10, sets:['tcmFast'],
+    plan:['This records the transmission at its fastest rate while you drive the way that usually brings the problem on: light, steady throttle.',
+          'Start stopped, then drive normally.',
+          'Each time you feel the hesitation, tap anywhere on the screen. The phone says "marked". Tap as many times as it happens.',
+          'There is nothing to read while moving.',
+          'When you are stopped at the end, press the End button at the bottom of the screen.'],
+    steps:()=>[{id:'drive', t:'TAP each time you feel it', say:'Recording. Tap the screen each time you feel it.', mark:true}]},
+  gentle:{name:'Gentle pull-away', where:'driving', mins:2, sets:['tcmFast'],
+    plan:['Find a clear, flat road. Stop completely, lever in D.',
+          'Tap anywhere on the screen while stopped. That is the only tap.',
+          'When the phone says go, accelerate very gently and evenly up to about 40 mph, taking roughly 30 seconds. Keep the pedal as still as you can.',
+          'It then asks you to hold that speed for 10 seconds, ends by itself and says so.',
+          'Repeat the test two or three times if you can.'],
+    steps:()=>[
+      {id:'stopped', t:'Stopped in D? TAP to begin.', say:'When you are stopped in drive, tap the screen.', tap:true, hold:2},
+      {id:'pull',    t:'Accelerate very gently to 40', say:'Go. Accelerate very gently and evenly to about forty.', secs:35},
+      {id:'hold',    t:'Hold this speed', say:'Now hold this speed.', secs:10}]},
+  coast:{name:'Coast down', where:'driving', mins:2, sets:['tcmFast'],
+    plan:['Find a road where you can coast safely from about 45 mph down to about 20 with nobody close behind.',
+          'Get to a steady 45 mph in D, then tap anywhere on the screen. That is the only tap.',
+          'When the phone says so, lift off the pedal completely and coast without braking for 20 seconds.',
+          'It ends by itself and says so. Brake whenever you need to: safety first, the test can be repeated.'],
+    steps:()=>[
+      {id:'approach', t:'Steady 45 mph, then TAP', say:'Get to a steady forty five. Tap the screen once you are there.', tap:true, hold:3},
+      {id:'steady',   t:'Hold steady', say:'Hold steady.', secs:8},
+      {id:'coast',    t:'Lift off and coast, no brake', say:'Lift off completely and coast. No brake unless you need it.', secs:20}]},
+  cruisedrive:{name:'Cruise control drive', where:'driving', mins:3, sets:['tcm','engCore'],
+    plan:['Find a road where you can use cruise control at 40 to 50 mph for a couple of minutes.',
+          'Set the cruise control, then tap anywhere on the screen. That is the only tap.',
+          'Keep your foot off the pedal for 90 seconds while cruise holds the speed. If you feel the hesitation, just remember it and tell Claude.',
+          'When the phone says so, cancel cruise with the CANCEL button, not the brake.',
+          'It ends by itself and says so.'],
+    steps:()=>[
+      {id:'set',    t:'Set cruise, then TAP', say:'Set the cruise control. Tap the screen once it is holding.', tap:true, hold:3},
+      {id:'cruise', t:'Cruise holding. Foot off the pedal', say:'Keep your foot off the pedal while cruise holds the speed.', secs:90},
+      {id:'cancel', t:'Cancel cruise with the button', say:'Now cancel cruise with the cancel button, not the brake.', secs:10}]},
+  lockup:{name:'Lock-up at cruise', where:'driving', mins:3, sets:['tcmFast'],
     plan:['Pick a road where you can hold 40 to 50 mph for about a minute. Lever in D.',
           'Once you are cruising steadily, tap anywhere on the screen. That is the only tap.',
           'The phone then speaks each cue: hold steady (20 s), press a little more (4 s), back to steady (12 s), press a little more (4 s), back to steady (12 s), lift off and coast (6 s).',
@@ -980,7 +999,7 @@ function gTick(){
   const ok=el>=(s.hold||0), left=Math.ceil((s.hold||0)-el);
   $('gNext').disabled=false; $('gNext').className=ok?'ready':'';
   $('gNext').textContent=(last?'FINISH':'NEXT')+(ok?'':'  (hold '+left+' s)');
-  $('dSub').textContent=s.tap?(ok?'tap anywhere':''):''; $('driveOv').className=(s.tap&&ok)?'tap':'';
+  $('dSub').textContent=s.mark?('marks: '+(gT.marks||0)):(s.tap?(ok?'tap anywhere':''):''); $('driveOv').className=(s.mark||(s.tap&&ok))?'tap':'';
 }
 setInterval(gTick,250);
 async function gStart(key, label){
@@ -1020,12 +1039,14 @@ async function gEnd(why){
 $('gNext').onclick=()=>{ if(!gT||!gT.started) return; const s=gT.steps[gT.i]; if(s.secs!=null) return; gNextStep(); };
 $('driveOv').onclick=ev=>{
   if(ev.target.id==='dEnd'||!gT||!gT.started) return;
-  const s=gT.steps[gT.i]; if(!s.tap) return;
+  const s=gT.steps[gT.i];
+  if(s.mark){ addRow('M',{}, {mark:1}); gT.marks=(gT.marks||0)+1; speak('Marked'); gTick(); return; }
+  if(!s.tap) return;
   if((performance.now()-gT.since)/1000 < (s.hold||0)) return;      // ignore accidental early taps
   gNextStep();
 };
 $('gAbort').onclick=()=>gEnd('ended by you');
-$('dEnd').onclick=()=>gEnd('ended by you');
+$('dEnd').onclick=()=>gEnd(gT&&gT.steps[gT.i].mark?'finished':'ended by you');
 renderTiles();
 
 // ---- Range scan: read-only service 22 over a span of data IDs ----
