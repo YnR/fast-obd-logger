@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fast OBD Logger</title>
+<style>
+  :root{--bg:#111418;--card:#1b2027;--fg:#e8ecf1;--mut:#8b96a5;--ok:#3ecf8e;--warn:#f5a524;--bad:#ff5c5c;--acc:#4da3ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif;padding:12px;max-width:720px;margin:auto}
+  h1{font-size:18px;margin:4px 0 10px}
+  .card{background:var(--card);border-radius:12px;padding:12px;margin-bottom:10px}
+  button,select{font:inherit;border-radius:10px;border:0;padding:12px 14px;background:#2b3340;color:var(--fg)}
+  button.primary{background:var(--acc);color:#04121f;font-weight:600}
+  button.go{background:var(--ok);color:#04170d;font-weight:600}
+  button.stop{background:var(--bad);color:#200404;font-weight:600}
+  button:disabled{opacity:.4}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px}
+  .cell{background:#232a33;border-radius:8px;padding:6px 8px}
+  .cell b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
+  .cell span{color:var(--mut);font-size:11px}
+  #status{color:var(--mut)}
+  #mark{width:100%;font-size:20px;padding:22px;background:var(--warn);color:#241600;font-weight:700}
+  canvas{width:100%;height:150px;background:#0d1014;border-radius:8px}
+  #log{font:11px/1.35 ui-monospace,monospace;color:var(--mut);max-height:130px;overflow:auto;white-space:pre-wrap}
+  details summary{cursor:pointer;color:var(--mut)}
+  label.chk{display:inline-flex;gap:6px;align-items:center;margin:4px 12px 4px 0}
+  .flash{animation:fl .6s}
+  @keyframes fl{from{background:#ff5c5c}to{background:#232a33}}
+  small{color:var(--mut)}
+</style>
+</head>
+<body>
+<h1>Fast OBD Logger <small>BLE ELM327</small></h1>
+
+<div class="card">
+  <div class="row">
+    <button id="btnConnect" class="primary">Connect dongle</button>
+    <select id="ecuSel" title="Which control unit to read">
+      <option value="all">All ECUs (broadcast)</option>
+      <option value="0">ECU 1 only (engine, 7E0)</option>
+      <option value="1">ECU 2 only (7E1)</option>
+    </select>
+  </div>
+  <p id="status">Not connected.</p>
+  <details>
+    <summary>Advanced</summary>
+    <p><small>Extra BLE service UUID (only if your dongle isn't found):</small><br>
+    <input id="extraSvc" placeholder="e.g. 0000fff0-0000-1000-8000-00805f9b34fb" style="width:100%;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg)"></p>
+    <label class="chk"><input type="checkbox" id="useGps" checked> Log phone GPS</label>
+    <label class="chk"><input type="checkbox" id="useMotion" checked> Log phone accelerometer</label>
+  </details>
+</div>
+
+<div class="card">
+  <b>Channels</b> <small>(first 6 ticked are polled every cycle; the rest are rotated in)</small>
+  <div id="pidList"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button id="btnStart" class="go" disabled>Start logging</button>
+    <button id="btnSave" disabled>Save CSV</button>
+    <button id="btnRecover">Recover last</button>
+  </div>
+  <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Auto-detected pedal dips: <b id="dips">0</b></p>
+  <div id="grid" class="grid"></div>
+</div>
+
+<div class="card">
+  <canvas id="plot" width="700" height="300"></canvas>
+  <small>green = pedal D, blue = commanded throttle, orange = engine torque (last 30 s)</small>
+</div>
+
+<div class="card">
+  <button id="mark" disabled>I FELT IT (tap)</button>
+  <small>Tap right when you feel a dip. It drops a marker row in the log.</small>
+</div>
+
+<div class="card"><div id="log"></div></div>
+
+<script id="core">
+// ---------- Pure logic (no DOM) ----------
+const PIDS = {
+  '49': {name:'pedal_D_pct',        len:1, f:a=>a[0]*100/255},
+  '4A': {name:'pedal_E_pct',        len:1, f:a=>a[0]*100/255},
+  '4C': {name:'cmd_throttle_pct',   len:1, f:a=>a[0]*100/255},
+  '62': {name:'actual_torque_pct',  len:1, f:a=>a[0]-125},
+  '0C': {name:'rpm',                len:2, f:a=>(a[0]*256+a[1])/4},
+  '0D': {name:'speed_mph',          len:1, f:a=>a[0]*0.621371},
+  '11': {name:'abs_throttle_pct',   len:1, f:a=>a[0]*100/255},
+  '0E': {name:'spark_deg',          len:1, f:a=>a[0]/2-64},
+  '42': {name:'module_volts',       len:2, f:a=>(a[0]*256+a[1])/1000},
+  '03': {name:'fuel_status_A',      len:2, f:a=>a[0]},
+  '0B': {name:'map_kpa',            len:1, f:a=>a[0]},
+  '04': {name:'load_pct',           len:1, f:a=>a[0]*100/255},
+  '8E': {name:'friction_torque_pct',len:1, f:a=>a[0]-125},
+  '47': {name:'abs_throttle_B_pct', len:1, f:a=>a[0]*100/255},
+  '45': {name:'rel_throttle_pct',   len:1, f:a=>a[0]*100/255},
+  '43': {name:'abs_load_pct',       len:2, f:a=>(a[0]*256+a[1])*100/255},
+  '05': {name:'coolant_c',          len:1, f:a=>a[0]-40}
+};
+const ORDER = ['49','4A','4C','62','0C','0D','11','0E','42','03','0B','04','8E','47','45','43','05'];
+const DEFAULT_ON = ['49','4A','4C','62','0C','0D','11','0E','42','03'];
+
+function hexToBytes(h){ const o=[]; for(let i=0;i+1<h.length;i+=2) o.push(parseInt(h.substr(i,2),16)); return o; }
+
+// Parse a Mode 01 response (headers off). Returns {pid: value}.
+function parseResp(text){
+  const out = {};
+  if(!text) return out;
+  const lines = text.split(/[\r\n]+/).map(s=>s.replace(/\s+/g,'').toUpperCase()).filter(Boolean)
+                    .filter(l=>/^[0-9A-F:]+$/.test(l));
+  let bytes;
+  if(lines.some(l=>/^[0-9A-F]:/.test(l))){            // multi-frame (ISO-TP) reply
+    let hex=''; for(const l of lines){ const m=l.match(/^[0-9A-F]:(.*)$/); if(m) hex+=m[1]; }
+    bytes = hexToBytes(hex);
+  } else {                                           // single-frame; first ECU that answered
+    const l = lines.find(x=>x.startsWith('41'));
+    if(!l) return out;
+    bytes = hexToBytes(l);
+  }
+  if(bytes[0]!==0x41) return out;
+  let i=1;
+  while(i<bytes.length){
+    const pid = bytes[i].toString(16).toUpperCase().padStart(2,'0');
+    const def = PIDS[pid];
+    if(!def) break;
+    const a = bytes.slice(i+1, i+1+def.len);
+    if(a.length<def.len) break;
+    out[pid] = def.f(a);
+    i += 1+def.len;
+  }
+  return out;
+}
+
+function makeGroups(selected){
+  const sel = ORDER.filter(p=>selected.includes(p));
+  const groups = [];
+  for(let i=0;i<sel.length;i+=6) groups.push({pids:sel.slice(i,i+6), multi:undefined, miss:0});
+  return groups;
+}
+
+class Poller {
+  constructor(send, expect, log){ this.send=send; this.expect=expect; this.log=log||(()=>{}); this.dead=new Set(); this.pidMiss={}; }
+  async queryGroup(g){
+    const pids = g.pids.filter(p=>!this.dead.has(p));
+    if(!pids.length) return {};
+    if(g.multi!==false && pids.length>1){
+      const r = await this.send('01 '+pids.join(' ')+this.expect);
+      const v = parseResp(r);
+      const got = pids.filter(p=>v[p]!==undefined).length;
+      if(got===pids.length){ g.miss=0; g.multi=true; return v; }
+      if(g.multi!==true && ++g.miss>=3){ g.multi=false; this.log('Multi-PID reply incomplete -> using single requests for group '+pids.join(',')); }
+      return v;
+    }
+    const out = {};
+    for(const p of pids){
+      const r = await this.send('01 '+p+this.expect);
+      const v = parseResp(r);
+      if(v[p]!==undefined){ out[p]=v[p]; this.pidMiss[p]=0; }
+      else if((this.pidMiss[p]=(this.pidMiss[p]||0)+1)>=5){
+        this.dead.add(p); g.pids=g.pids.filter(x=>x!==p); g.multi=undefined; g.miss=0;
+        this.log('PID '+p+' ('+PIDS[p].name+') not answered by this ECU, dropped');
+      }
+    }
+    return out;
+  }
+}
+</script>
+
+<script id="app">
+// ---------- App / BLE / UI ----------
+const $ = id => document.getElementById(id);
+const SERVICES = [0xfff0,0xffe0,0x18f0,0xfff1,0xae00,
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455','e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+  '0000fff0-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb'];
+let device=null, server=null, wChar=null, nChar=null;
+let rxBuf='', pending=null, running=false, connected=false;
+let rows=[], latest={}, prevPed=null, dips=0, hist=[], lastGeo={}, lastAcc={}, wakeLock=null, t0=0, geoId=null;
+const enc=new TextEncoder(), dec=new TextDecoder();
+
+function log(m){ const el=$('log'); el.textContent += new Date().toLocaleTimeString()+'  '+m+'\n'; el.scrollTop=el.scrollHeight; }
+function setStatus(m){ $('status').textContent=m; }
+
+// channel checkboxes + live grid
+(function buildUI(){
+  const list=$('pidList'), grid=$('grid');
+  for(const p of ORDER){
+    const l=document.createElement('label'); l.className='chk';
+    l.innerHTML='<input type="checkbox" data-pid="'+p+'"'+(DEFAULT_ON.includes(p)?' checked':'')+'> '+PIDS[p].name;
+    list.appendChild(l);
+    const c=document.createElement('div'); c.className='cell'; c.id='c'+p;
+    c.innerHTML='<span>'+PIDS[p].name+'</span><b>–</b>'; grid.appendChild(c);
+  }
+})();
+const selectedPids = ()=>[...document.querySelectorAll('#pidList input:checked')].map(i=>i.dataset.pid);
+
+// ---- BLE transport ----
+function onNotify(ev){
+  rxBuf += dec.decode(ev.target.value);
+  if(rxBuf.includes('>')){
+    const t=rxBuf; rxBuf='';
+    if(pending){ const p=pending; pending=null; clearTimeout(p.to); p.resolve(t.replace(/>/g,'')); }
+  }
+}
+async function writeStr(s){
+  const data=enc.encode(s);
+  for(let i=0;i<data.length;i+=20){
+    const ch=data.slice(i,i+20);
+    if(wChar.properties.writeWithoutResponse) await wChar.writeValueWithoutResponse(ch);
+    else await wChar.writeValue(ch);
+  }
+}
+function send(cmd, timeout=1200){
+  return new Promise((resolve,reject)=>{
+    rxBuf='';
+    const p={resolve}; pending=p;
+    p.to=setTimeout(async()=>{ if(pending===p){ pending=null; try{await writeStr('\r');}catch(e){} setTimeout(()=>{rxBuf='';resolve(null);},150); } }, timeout);
+    writeStr(cmd+'\r').catch(e=>{ clearTimeout(p.to); pending=null; reject(e); });
+  });
+}
+
+async function findChars(){
+  const svcs = await server.getPrimaryServices();
+  for(const s of svcs){
+    let chars; try{ chars=await s.getCharacteristics(); }catch(e){ continue; }
+    const n=chars.find(c=>c.properties.notify||c.properties.indicate);
+    const w=chars.find(c=>c.properties.writeWithoutResponse||c.properties.write);
+    if(n&&w){ log('Using service '+s.uuid); return {n,w}; }
+  }
+  throw new Error('No UART-style service found. Try the Advanced box with your dongle\'s service UUID.');
+}
+
+async function connect(){
+  if(!navigator.bluetooth){ setStatus('This browser has no Web Bluetooth. Use Chrome on Android.'); return; }
+  try{
+    setStatus('Choose your dongle...');
+    const services=[...SERVICES]; const x=$('extraSvc').value.trim(); if(x) services.push(x.toLowerCase());
+    if(!device) device = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:services});
+    device.addEventListener('gattserverdisconnected', onDisc);
+    setStatus('Connecting to '+(device.name||'device')+'...');
+    server = await device.gatt.connect();
+    const {n,w} = await findChars(); nChar=n; wChar=w;
+    await nChar.startNotifications();
+    nChar.addEventListener('characteristicvaluechanged', onNotify);
+    connected=true;
+    await initElm();
+    $('btnStart').disabled=false;
+    $('btnConnect').textContent='Reconnect';
+  }catch(e){ setStatus('Connect failed: '+e.message); log('ERR '+e.message); connected=false; }
+}
+function onDisc(){
+  connected=false; const was=running; running=false;
+  $('btnStart').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
+  log('Disconnected'); saveLocal();
+}
+
+async function initElm(){
+  setStatus('Initialising dongle...');
+  await send('ATZ',3000);
+  for(const c of ['ATE0','ATL0','ATS0','ATH0','ATAT2','ATST 20','ATSP0']) { const r=await send(c); log(c+' -> '+(r?r.trim().replace(/\s+/g,' '):'(no reply)')); }
+  setStatus('Talking to the car (ignition on)...');
+  const r=await send('0100',12000);
+  if(!r || !/41\s*00/i.test(r.replace(/\s+/g,' '))){ setStatus('Car did not answer 0100: '+(r||'no reply').trim()); throw new Error('no ECU reply'); }
+  const proto=((await send('ATDPN'))||'').trim().replace(/^A/,'');
+  log('Protocol '+proto);
+  const ecu=$('ecuSel').value;
+  window.__expect='';
+  if(ecu!=='all'){
+    if(proto==='6'||proto==='8'){
+      const tx=ecu==='0'?'7E0':'7E1', rx=ecu==='0'?'7E8':'7E9';
+      log('ATSH '+tx+' -> '+(await send('ATSH '+tx)||'').trim());
+      log('ATCRA '+rx+' -> '+(await send('ATCRA '+rx)||'').trim());
+      window.__expect=' 1';
+    } else { log('ECU targeting needs 11-bit CAN; staying on broadcast.'); }
+  }
+  setStatus('Ready. Protocol '+proto+'.');
+}
+
+// ---- logging loop ----
+const HEADER=['t_s','epoch_ms','group',...ORDER.map(p=>PIDS[p].name),'auto_dip','mark','gps_lat','gps_lon','gps_mph','phone_ax','phone_ay','phone_az'];
+function addRow(grp, vals, flags){
+  const now=performance.now();
+  const r=[((now-t0)/1000).toFixed(3), Date.now(), grp];
+  for(const p of ORDER) r.push(vals&&vals[p]!==undefined ? +vals[p].toFixed(3) : '');
+  r.push(flags.dip||'', flags.mark||'', lastGeo.lat??'', lastGeo.lon??'', lastGeo.mph??'', lastAcc.x??'', lastAcc.y??'', lastAcc.z??'');
+  rows.push(r); $('rows').textContent=rows.length;
+}
+async function startLogging(){
+  if(!connected) return;
+  const sel=selectedPids(); if(!sel.length){ setStatus('Tick at least one channel.'); return; }
+  if(rows.length===0) t0=performance.now(); else if(!t0) t0=performance.now();
+  if($('useGps').checked && navigator.geolocation && geoId==null)
+    geoId=navigator.geolocation.watchPosition(p=>{lastGeo={lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),mph:p.coords.speed!=null?+(p.coords.speed*2.23694).toFixed(2):''};},()=>{},{enableHighAccuracy:true});
+  if($('useMotion').checked){
+    try{ if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(e){}
+    window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a) lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)};});
+  }
+  try{ wakeLock=await navigator.wakeLock?.request('screen'); }catch(e){}
+  const groups=makeGroups(sel);
+  const poller=new Poller(send, window.__expect||'', log);
+  running=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
+  setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
+  let rot=1, times=[];
+  try{
+    while(running){
+      const picks=[0]; if(groups.length>1){ picks.push(rot); rot = rot>=groups.length-1 ? 1 : rot+1; }
+      for(const gi of picks){
+        if(!running) break;
+        const v=await poller.queryGroup(groups[gi]);
+        const flags={};
+        Object.assign(latest,v);
+        if(v['49']!==undefined){
+          if(prevPed!==null && prevPed>=20 && v['49']<=15.5){ flags.dip=1; dips++; $('dips').textContent=dips; const c=$('c49'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
+          prevPed=v['49'];
+          hist.push({t:performance.now(),ped:v['49'],cmd:latest['4C'],trq:latest['62']});
+          const cut=performance.now()-30000; while(hist.length&&hist[0].t<cut) hist.shift();
+          times.push(performance.now()); while(times.length>20) times.shift();
+          if(times.length>2) $('hz').textContent=((times.length-1)/((times[times.length-1]-times[0])/1000)).toFixed(1);
+        }
+        if(Object.keys(v).length) addRow(gi, v, flags);
+      }
+    }
+  }catch(e){ log('Loop error: '+e.message); }
+  running=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  try{wakeLock&&wakeLock.release();}catch(e){}
+  if(connected) setStatus('Stopped. '+rows.length+' rows logged.');
+  saveLocal();
+}
+$('btnStart').onclick=()=>{ if(running){ running=false; } else startLogging(); };
+$('btnConnect').onclick=connect;
+$('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
+
+// ---- UI refresh ----
+setInterval(()=>{
+  for(const p of ORDER){ const v=latest[p]; if(v!==undefined) document.querySelector('#c'+p+' b').textContent = Math.abs(v)>=100?v.toFixed(0):v.toFixed(1); }
+  draw();
+},250);
+function draw(){
+  const cv=$('plot'), g=cv.getContext('2d'), W=cv.width, H=cv.height; g.clearRect(0,0,W,H);
+  g.strokeStyle='#2a323d'; g.lineWidth=1; for(let y=0;y<=100;y+=25){const yy=H-(y/100)*H; g.beginPath();g.moveTo(0,yy);g.lineTo(W,yy);g.stroke();}
+  if(hist.length<2) return;
+  const now=performance.now();
+  const line=(key,color)=>{ g.strokeStyle=color; g.lineWidth=2; g.beginPath(); let s=false;
+    for(const h of hist){ const v=h[key]; if(v==null) continue; const x=W-((now-h.t)/30000)*W, y=H-Math.max(0,Math.min(100,v))/100*H; if(!s){g.moveTo(x,y);s=true;} else g.lineTo(x,y);} g.stroke(); };
+  line('ped','#3ecf8e'); line('cmd','#4da3ff'); line('trq','#f5a524');
+}
+
+// ---- CSV save / recover ----
+function csv(){ return [HEADER.join(','),...rows.map(r=>r.join(','))].join('\n'); }
+function saveLocal(){ try{ localStorage.setItem('obdlog_last', csv()); }catch(e){} }
+setInterval(()=>{ if(running) saveLocal(); },20000);
+async function saveCsv(text){
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  const name=`obd_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.csv`;
+  const file=new File([text],name,{type:'text/csv'});
+  try{ if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return; } }catch(e){ if(e.name==='AbortError') return; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+}
+$('btnSave').onclick=()=>saveCsv(csv());
+$('btnRecover').onclick=()=>{ let t=null; try{t=localStorage.getItem('obdlog_last');}catch(e){} if(t) saveCsv(t); else log('Nothing stored.'); };
+if(!navigator.bluetooth) setStatus('This browser has no Web Bluetooth. Open this page in Chrome on Android (https or localhost).');
+</script>
+</body>
+</html>
