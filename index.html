@@ -61,7 +61,7 @@
       <option value="0">ECU 1 only (engine, 7E0)</option>
       <option value="1">ECU 2 only (7E1)</option>
     </select>
-    <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option></select>
+    <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option><option value="scan">Mode: Full scan</option></select>
     <label class="chk" style="display:block;margin-top:8px"><input type="checkbox" id="autoMode"> Auto: reconnect to the last dongle, start logging when the car is on, save the file when it turns off</label>
   </div>
   <p id="status">Not connected.</p>
@@ -150,6 +150,19 @@
   </details>
 </div>
 
+<div class="card" id="scanModeCard" style="display:none">
+  <b>Full scan</b> <small>Read-only service 22 over the data IDs below, for each module listed. Runs only while parked in P or N with speed 0, and pauses by itself otherwise. Progress is saved on this phone, so you can stop and continue on later drives.</small>
+  <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
+  <small>One line per module: address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
+  <div class="row" style="margin-top:8px">
+    <button id="fsGo" disabled>Start / continue</button>
+    <button id="fsStop" style="display:none" class="stop">Pause</button>
+    <button id="fsSave">Save report</button>
+    <button id="fsReset">Reset progress</button>
+  </div>
+  <div id="fsProg" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
+  <pre id="fsOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:240px;overflow:auto"></pre>
+</div>
 <div class="card">
   <div class="row">
     <button id="btnStart" class="go" disabled>Start logging</button>
@@ -472,7 +485,7 @@ async function connectNative(auto){
 const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
 let autoBusy=false, autoPause=false, lastDev=null, lastOpenErr='';
 try{ lastDev=JSON.parse(localStorage.getItem('obd_last')||'null'); }catch(e){}
-const autoOn=()=>$('autoMode').checked && $('modeSel').value!=='explore';
+const autoOn=()=>$('autoMode').checked && $('modeSel').value==='normal';
 try{ const s=localStorage.getItem('obd_auto'); $('autoMode').checked = s===null ? NATIVE : s==='1'; }catch(e){ $('autoMode').checked=NATIVE; }
 $('autoMode').onchange=()=>{ try{ localStorage.setItem('obd_auto',$('autoMode').checked?'1':'0'); }catch(e){} if(autoOn()){ autoPause=false; autoLoop(); } };
 function rememberDev(){ if(device){ lastDev={id:device.id,name:device.name}; try{ localStorage.setItem('obd_last',JSON.stringify(lastDev)); }catch(e){} } }
@@ -865,9 +878,121 @@ $('scanStop').onclick=()=>{ scanning=false; };
 $('scanSave').onclick=()=>saveFile(scanReport.join('\n'),'obd_scan','txt','text/plain');
 setInterval(()=>{ if(!scanning){ const ok=connected&&!running; $('scanQuick').disabled=!ok; $('scanGo').disabled=!ok; } },1000);
 
+
+// ---- Full scan mode: resumable, parked only (P or N, speed 0) ----
+const FS_KEY='obd_fullscan';
+const FS_MODULES=['71A','737','770','771','777','780','7A0','7A1','7A5','7B7','7C3','7C4','7D0','7D1','7D2','7D4','7D5','7D6','7E0','7E1','7E5'];
+const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
+const FS_DEFAULT=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
+let fsActive=false;
+function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
+let fsCur=null;
+function fsSave(st){
+  if(!st) return true;
+  st.saved=Date.now();
+  try{ localStorage.setItem(FS_KEY, JSON.stringify(st)); return true; }
+  catch(e){ $('fsProg').textContent='NOT SAVED: storage full or blocked. Tap Save report to keep results.'; return false; }
+}
+// keep progress if the phone locks or the app goes to the background
+window.addEventListener('pagehide', ()=>{ if(fsCur) fsSave(fsCur); });
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && fsCur) fsSave(fsCur); });
+function fsParsePlan(text){
+  const out=[];
+  for(const line of text.split('\n')){
+    const p=line.trim().split(/\s+/); if(p.length<3) continue;
+    const tx=p[0].toUpperCase(), from=parseInt(p[1],16), to=parseInt(p[2],16);
+    if(!/^[0-9A-F]{3}$/.test(tx)||isNaN(from)||isNaN(to)||to<from) continue;
+    out.push({tx:tx,from:from,to:to});
+  }
+  return out;
+}
+function fsPos(st){
+  if(st.i>=st.plan.length) return 'all ranges done';
+  const r=st.plan[st.i]; return 'range '+(st.i+1)+' of '+st.plan.length+' · '+r.tx+' '+fsH4(st.did==null?r.from:st.did)+' (end '+fsH4(r.to)+')';
+}
+// Parked = speed 0 (engine ECU, PID 0D) and lever in P or N (transmission block 01A0, byte 21 = 0B or 09).
+async function fsParked(){
+  await setTarget('7E0');
+  const sp=String(await send('010D',1500)).replace(/\s/g,'').toUpperCase().match(/410D([0-9A-F]{2})/);
+  if(!sp) return 'no speed reply';
+  if(parseInt(sp[1],16)!==0) return 'car moving';
+  await setTarget('7E1');
+  const tr=String(await send('2201A0',1500)).replace(/\s/g,'').toUpperCase().match(/6201A0([0-9A-F]{40})([0-9A-F]{2})/);
+  if(!tr) return 'no transmission reply';
+  const lever=parseInt(tr[2],16);
+  if(lever!==0x0B && lever!==0x09) return 'lever not in P or N';
+  return '';
+}
+function fsRefresh(){
+  const sc=$('modeSel').value==='scan';
+  $('fsGo').disabled=!sc || fsActive || !connected || running || scanning;
+  $('fsStop').style.display=fsActive?'':'none';
+  $('fsReset').disabled=fsActive;
+  $('fsSave').disabled=!fsLoad();
+}
+async function fullScan(){
+  if(running||scanning||fsActive||!connected) return;
+  if(window.__proto!=='6'&&window.__proto!=='8'){ $('fsOut').textContent='Needs 11-bit CAN (protocol 6 or 8).'; return; }
+  let st=fsLoad();
+  if(!st||st.done){
+    const plan=fsParsePlan($('fsPlan').value);
+    if(!plan.length){ $('fsProg').textContent='Plan is empty or wrong. Use lines like: 7E0 F180 F1FF'; return; }
+    st={plan:plan,i:0,did:null,miss:0,found:[],done:false};
+  }
+  fsActive=true; fsCur=st; fsRefresh();
+  const out=$('fsOut');
+  const say=l=>{ out.textContent+=l+'\n'; out.scrollTop=out.scrollHeight; };
+  say('-- '+new Date().toLocaleTimeString()+' '+(st.did==null&&st.i===0?'start':'continue')+' --');
+  let lastCheck=-1000, reason='';
+  try{
+    while(fsActive && connected && st.i<st.plan.length){
+      const r=st.plan[st.i];
+      if(st.did==null){ st.did=r.from; st.miss=0; say('# '+r.tx+' '+fsH4(r.from)+'-'+fsH4(r.to)); lastCheck=-1000; }
+      if(st.did-lastCheck>=16){
+        const why=await fsParked();
+        lastCheck=st.did;
+        if(why){
+          if(why!==reason){ say('paused: '+why); reason=why; }
+          $('fsProg').textContent='Paused: '+why+' · '+fsPos(st);
+          fsSave(st);
+          await new Promise(res=>setTimeout(res,2000));
+          lastCheck=-1000;
+          continue;
+        }
+        if(reason){ say('resumed'); reason=''; }
+        await setTarget(r.tx);
+      }
+      const raw='22'+fsH4(st.did);
+      let u=parseUds(await send(raw,700));
+      if(u.kind==='neg' && u.nrc===0x78) u=parseUds(await send(raw,3000));
+      if(u.kind==='ok'){ st.miss=0; st.found.push({tx:r.tx,raw:raw,hex:hexStr(u.all)}); say(r.tx+' '+raw+'  OK  '+hexStr(u.all)); fsSave(st); }
+      else if(u.kind==='other'){ st.miss=0; say(r.tx+' '+raw+'  odd reply: '+hexStr(u.all)); }
+      else if(u.kind==='neg'){ st.miss=0; }
+      else { st.miss++; }
+      if(st.miss>=25){ say(r.tx+' no reply 25 times in a row, skipping rest of range'); st.did=r.to; st.miss=0; }
+      const cur=st.did; st.did++;
+      if(st.did>r.to){ st.i++; st.did=null; st.miss=0; if(st.i>=st.plan.length){ st.done=true; } }
+      else if(cur%16===0){ fsSave(st); }
+      $('fsProg').textContent=fsPos(st)+' · found '+st.found.length+' · saved '+new Date().toLocaleTimeString();
+    }
+  }catch(e){ say('Error: '+e.message); }
+  fsActive=false;
+  try{ await applyTarget(); }catch(e){}
+  const ok=fsSave(st);
+  if(st.done) say('Full scan finished. Found '+st.found.length+'. Tap Save report.');
+  if(ok) $('fsProg').textContent=(st.done?'Finished':'Stopped')+' · '+fsPos(st)+' · found '+st.found.length+' · saved '+new Date(st.saved).toLocaleTimeString();
+  fsRefresh();
+}
+$('fsPlan').value=(fsLoad()&&fsLoad().plan)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
+$('fsGo').onclick=fullScan;
+$('fsStop').onclick=()=>{ fsActive=false; };
+$('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsRefresh(); };
+$('fsSave').onclick=()=>{ const st=fsLoad(); if(!st) return; const lines=['Fast OBD Logger full scan '+new Date().toISOString(),'plan:'].concat(st.plan.map(p=>'  '+p.tx+' '+fsH4(p.from)+'-'+fsH4(p.to)),['',st.found.length+' data IDs answered:'],st.found.map(f=>f.tx+' '+f.raw+' '+f.hex)); saveFile(lines.join('\n'),'obd_fullscan','txt','text/plain'); };
+setInterval(fsRefresh,1000);
+
 $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
-$('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCard').style.display=ex?'none':''; $('exploreCard').style.display=ex?'':'none'; $('ecuSel').disabled=ex; };
+$('modeSel').onchange=()=>{ const m=$('modeSel').value, ex=m==='explore', sc=m==='scan'; $('normalCard').style.display=(ex||sc)?'none':''; $('exploreCard').style.display=ex?'':'none'; $('scanModeCard').style.display=sc?'':'none'; $('ecuSel').disabled=ex||sc; $('btnStart').style.display=sc?'none':''; fsRefresh(); };
 
 $('btnStart').onclick=()=>{ if(running){ running=false; if(autoOn()) autoPause=true; } else { autoPause=false; if(autoOn()&&NATIVE){ if(!autoBusy) autoLoop(); } else startLogging(); } };
 $('btnConnect').onclick=()=>connect();
