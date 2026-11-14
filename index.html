@@ -103,6 +103,7 @@
       <div class="cell"><span>gear</span><b id="tGear">–</b></div>
       <div class="cell"><span>turbine rpm</span><b id="tTurb">–</b></div>
       <div class="cell"><span>converter slip rpm</span><b id="tSlip">–</b></div>
+      <div class="cell"><span>brake</span><b id="tBrake">–</b></div>
     </div>
     <div id="grid" class="grid"></div>
   </div>
@@ -242,7 +243,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-b · three modes</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-c · three modes</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -703,13 +704,13 @@ function onBase(v, times){
 }
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
-const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D'};
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
+const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D',0x0C:'M'};   // M = manual gate
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
 function decodeTcm(d){
   if(!d||d.length<23) return null;
-  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4,
+  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4, tcm_brake:d[24]&1,
           tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
 }
 async function readTcm(){
@@ -846,17 +847,17 @@ async function runExplore(){
 
 // ---- Mode 3: identification tests ----
 // Data blocks found on this car by the sweeps (read-only service 22).
-const ENG_WIDE=['E001','E002','E003','E004','E005','E006','E009','E00A','E010','E011','E012','E013','E014','E016','E017','E018','E019','E01B','E01C','E01D','E01E','E01F','E020','E021','E023','E024','E027','E02C','E02D','E080','E091','E092','E095','E0F1','E0F2'];
+// Large blocks that never changed in the first round of parked tests are left out to keep each cycle short.
+const ENG_WIDE=['E001','E002','E003','E004','E005','E006','E009','E00A','E010','E011','E014','E016','E017','E018','E019','E01B','E01D','E01F','E020','E023','E027','E080','E091','E092','E095','E0F1'];
 const SETS = window.__guideReq ? {tcm:window.__guideReq.map(r=>({tx:'7E1',raw:r})), engCore:[], engWide:[]} : {
   tcm:     ['2201A0','2201A1','2201A2','2201A3'].map(r=>({tx:'7E1',raw:r})),
   engCore: ['22E001','22E002'].map(r=>({tx:'7E0',raw:r})),
   engWide: ENG_WIDE.map(d=>({tx:'7E0',raw:'22'+d}))
 };
-const onOff=(what,secs)=>[
-  {id:'off1', t:what+' OFF. Hold.', hold:secs},
-  {id:'on1',  t:what+' ON. Hold.', hold:secs},
-  {id:'off2', t:what+' OFF again. Hold.', hold:secs},
-  {id:'on2',  t:what+' ON again. Hold.', hold:secs}];
+// Three off/on rounds, each held long enough for several readings of every block.
+const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
+  {id:'off'+k, t:(off||what+' OFF')+(k>1?' again':'')+'. Do it now, then hold.', hold:secs},
+  {id:'on'+k,  t:(on||what+' ON')+(k>1?' again':'')+'. Do it now, then hold.', hold:secs}]);
 // Parked steps: you tap NEXT (it turns green after "hold" seconds).
 // Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
 const TESTS={
@@ -873,35 +874,24 @@ const TESTS={
     {id:'minus', t:'Tap − once. Hold.', hold:5},
     {id:'D2',    t:'Back to D. Hold.', hold:5},
     {id:'P',     t:'Back to P.', hold:3}]},
-  drivemode:{name:'Drive mode button', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
-    {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:8},
-    {id:'press1',t:'Press DRIVE MODE once. Hold.', hold:8},
-    {id:'press2',t:'Press DRIVE MODE again. Hold.', hold:8},
-    {id:'press3',t:'Press DRIVE MODE again. Hold.', hold:8},
-    {id:'press4',t:'Press again until it is back where it started. Hold.', hold:8}]},
-  brake:{name:'Brake pedal', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
-    {id:'off1', t:'In P. Foot OFF the brake. Hold.', hold:8},
-    {id:'on1',  t:'Press the brake firmly. Hold.', hold:8},
-    {id:'off2', t:'Foot OFF the brake. Hold.', hold:8},
-    {id:'on2',  t:'Press the brake lightly. Hold.', hold:8}]},
-  throttle:{name:'Accelerator in Park', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
-    {id:'idle1', t:'In P. Foot off the pedal. Hold.', hold:8},
-    {id:'rev1',  t:'Press gently to about 1500 rpm. Hold it there.', hold:8},
-    {id:'idle2', t:'Release. Hold.', hold:8},
-    {id:'rev2',  t:'Press to about 2500 rpm. Hold it there.', hold:8},
-    {id:'idle3', t:'Release. Hold.', hold:8}]},
-  ac:{name:'A/C button', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>onOff('A/C',10)},
-  steering:{name:'Steering wheel', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
-    {id:'center1', t:'In P. Hands off the wheel. Hold.', hold:8},
-    {id:'left',    t:'Turn the wheel left and keep light pressure on it.', hold:8},
-    {id:'center2', t:'Back to centre, hands off. Hold.', hold:8},
-    {id:'right',   t:'Turn the wheel right and keep light pressure on it.', hold:8}]},
-  loads:{name:'Lights and rear defrost', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
-    {id:'alloff',  t:'Headlights off, rear defrost off. Hold.', hold:10},
-    {id:'lights',  t:'Headlights ON. Hold.', hold:10},
-    {id:'defrost', t:'Rear defrost ON as well. Hold.', hold:10},
-    {id:'alloff2', t:'Both OFF again. Hold.', hold:10}]},
-  custom:{name:'Custom on/off test', where:'parked', mins:1, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',10)},
+  drivemode:{name:'Drive mode button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
+    {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:15},
+    {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
+    {id:'press2',t:'Press DRIVE MODE again now. Hold.', hold:15},
+    {id:'press3',t:'Press DRIVE MODE again now. Hold.', hold:15},
+    {id:'press4',t:'Press again until it is back where it started. Hold.', hold:15}]},
+  brake:{name:'Brake pedal', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Brake',12,'In P. Foot OFF the brake','Press the brake')},
+  throttle:{name:'Accelerator in Park', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
+    {id:'idle1', t:'In P. Foot off the pedal. Hold.', hold:12},
+    {id:'rev1',  t:'Press gently to about 1500 rpm now. Hold it there.', hold:12},
+    {id:'idle2', t:'Release now. Hold.', hold:12},
+    {id:'rev2',  t:'Press to about 2500 rpm now. Hold it there.', hold:12},
+    {id:'idle3', t:'Release now. Hold.', hold:12}]},
+  ac:{name:'A/C button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('A/C',15)},
+  steering:{name:'Steering wheel', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Steering',12,'Hands off the wheel','Turn the wheel and keep light pressure on it')},
+  lights:{name:'Headlights', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Headlights',15)},
+  defrost:{name:'Rear defrost', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Rear defrost',15)},
+  custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',15)},
   free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
   drive:{name:'Normal drive (gears)', where:'driving', mins:8, sets:['tcm','engCore'],
@@ -1284,7 +1274,7 @@ $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); marks++; $('marks').textConten
 // ---- UI refresh ----
 setInterval(()=>{
   for(const p of ORDER){ const v=latest[p]; if(v!==undefined) document.querySelector('#c'+p+' b').textContent = Math.abs(v)>=100?v.toFixed(0):v.toFixed(1); }
-  if(tcmLatest){ $('tLever').textContent=tcmLatest.tcm_lever; $('tGear').textContent=tcmLatest.tcm_gear; $('tTurb').textContent=tcmLatest.tcm_turbine_rpm.toFixed(0); $('tSlip').textContent=tcmLatest.tcm_slip_rpm.toFixed(0); }
+  if(tcmLatest){ $('tLever').textContent=tcmLatest.tcm_lever; $('tGear').textContent=tcmLatest.tcm_gear; $('tTurb').textContent=tcmLatest.tcm_turbine_rpm.toFixed(0); $('tSlip').textContent=tcmLatest.tcm_slip_rpm.toFixed(0); $('tBrake').textContent=tcmLatest.tcm_brake?'ON':'off'; }
   exLatest.forEach((h,k)=>{ const el=document.getElementById('x'+k); if(el) el.textContent=h?(h.length>40?h.slice(0,40)+'…':h):'–'; });
   draw();
 },250);
