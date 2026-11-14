@@ -29,8 +29,11 @@ import java.util.UUID
  * The shell only moves bytes. All OBD logic, and the rule that only read requests are sent, lives in the page.
  */
 class MainActivity : Activity() {
+    companion object {
+        // Shared across activity restarts: the background service can keep the process (and an old link) alive.
+        @Volatile var socket: BluetoothSocket? = null
+    }
     private lateinit var web: WebView
-    private var socket: BluetoothSocket? = null
     private var selfClose = false
     private val writeLock = Any()
     private val spp: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -38,6 +41,8 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try { socket?.close() } catch (e: IOException) { }   // drop any link left over from an earlier screen
+        socket = null
         web = WebView(this)
         setContentView(web)
         web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)

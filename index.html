@@ -171,7 +171,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-p · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-q · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -471,7 +471,7 @@ async function connectNative(auto){
 
 // ---- Auto mode: reconnect, start/stop logging with the car, save a file whenever a session ends ----
 const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
-let autoBusy=false, autoPause=false, lastDev=null;
+let autoBusy=false, autoPause=false, lastDev=null, lastOpenErr='';
 try{ lastDev=JSON.parse(localStorage.getItem('obd_last')||'null'); }catch(e){}
 const autoOn=()=>$('autoMode').checked && $('modeSel').value!=='explore';
 try{ const s=localStorage.getItem('obd_auto'); $('autoMode').checked = s===null ? NATIVE : s==='1'; }catch(e){ $('autoMode').checked=NATIVE; }
@@ -481,9 +481,9 @@ function enableUI(){ $('btnStart').disabled=false; $('probeGo').disabled=false; 
 async function tryOpen(dev){
   device={id:dev.id,name:dev.name};
   const r=await new Promise(res=>{ nativeConnRes=res; AndroidBT.connect(dev.id); });
-  if(!r.ok){ device=null; return false; }
+  if(!r.ok){ device=null; lastOpenErr=r.msg; log('Connect failed: '+r.msg); return false; }
   const v=await verifyDongle();
-  if(!v.ok){ try{ AndroidBT.close(); }catch(e){} device=null; return false; }
+  if(!v.ok){ try{ AndroidBT.close(); }catch(e){} device=null; lastOpenErr=v.reason; log('Dongle check failed: '+v.reason); return false; }
   connected=true; renderDevices(); return true;
 }
 async function endSession(why){
@@ -501,7 +501,7 @@ async function autoLoop(){
         if(!lastDev){ setStatus('Auto: tap Connect once to choose your dongle.'); break; }
         if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); await sleepMs(3000); continue; }
         setStatus('Auto: looking for '+lastDev.name+'...');
-        if(!(await tryOpen(lastDev))){ await sleepMs(4000); continue; }
+        if(!(await tryOpen(lastDev))){ setStatus('Auto: could not reach '+lastDev.name+' ('+(lastOpenErr||'no answer')+'). Retrying...'); await sleepMs(4000); continue; }
       }
       setStatus('Auto: dongle connected, waiting for the car (ignition on)...');
       let up=true; try{ await initElm(); }catch(e){ up=false; }
