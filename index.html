@@ -100,7 +100,7 @@
     <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
     <div id="tcmGrid" class="grid" style="margin-bottom:8px">
       <div class="cell"><span>lever</span><b id="tLever">–</b></div>
-      <div class="cell"><span>gear (provisional)</span><b id="tGear">–</b></div>
+      <div class="cell"><span>gear</span><b id="tGear">–</b></div>
       <div class="cell"><span>turbine rpm</span><b id="tTurb">–</b></div>
       <div class="cell"><span>converter slip rpm</span><b id="tSlip">–</b></div>
     </div>
@@ -242,7 +242,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-a · three modes</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-b · three modes</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -701,14 +701,15 @@ function onBase(v, times){
   }
   return flags;
 }
-// Transmission block 22 01A0 on 7E1 (decoded on this car; gear values above 1 are still provisional)
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
+// Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
+// Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
 const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D'};
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
 function decodeTcm(d){
   if(!d||d.length<23) return null;
-  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]),
+  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4,
           tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
 }
 async function readTcm(){
