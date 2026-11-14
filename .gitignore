@@ -2,3 +2,4 @@ build/
 .gradle/
 *.xcodeproj
 local.properties
+mac/bridge/
