@@ -29,6 +29,10 @@
   .flash{animation:fl .6s}
   @keyframes fl{from{background:#ff5c5c}to{background:#232a33}}
   small{color:var(--mut)}
+  .dev{padding:6px 10px;border-radius:8px;margin:4px 0;background:#232a33}
+  .dev.ok{color:var(--ok)}
+  .dev.bad{opacity:.4}
+  .dev a{color:var(--acc);margin-left:6px}
 </style>
 </head>
 <body>
@@ -45,6 +49,7 @@
     <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option></select>
   </div>
   <p id="status">Not connected.</p>
+  <p id="notice" style="display:none;color:var(--warn);font-weight:600"></p>
   <details>
     <summary>Advanced</summary>
     <p><small>Extra BLE service UUID (only if your dongle isn't found):</small><br>
@@ -52,6 +57,11 @@
     <label class="chk"><input type="checkbox" id="useGps" checked> Log phone GPS</label>
     <label class="chk"><input type="checkbox" id="useMotion" checked> Log phone accelerometer</label>
   </details>
+</div>
+
+<div class="card" id="devCard" style="display:none">
+  <b>Devices</b> <small>Chrome's picker can't be restyled, so devices that failed the check are hidden there and greyed out here.</small>
+  <div id="devList"></div>
 </div>
 
 <div class="card" id="normalCard">
@@ -122,6 +132,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
+<p style="text-align:center"><small id="ver">build 2026-11-13-d · device vetting</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -297,37 +308,91 @@ async function findChars(){
     const w=chars.find(c=>c.properties.writeWithoutResponse||c.properties.write);
     if(n&&w){ log('Using service '+s.uuid); return {n,w}; }
   }
-  throw new Error('No UART-style service found. Try the Advanced box with your dongle\'s service UUID.');
+  throw Object.assign(new Error('No UART-style service found. Try the Advanced box with your dongle\'s service UUID.'),{noUart:true});
 }
 
-async function connect(){
+// ---- device vetting ----
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let rejected=[], suppressDisc=false, lastReject='';
+try{ rejected=JSON.parse(localStorage.getItem('obd_rejected')||'[]'); }catch(e){}
+const saveRejected=()=>{ try{ localStorage.setItem('obd_rejected', JSON.stringify(rejected)); }catch(e){} };
+function renderDevices(){
+  const items=[];
+  if(device&&connected) items.push('<div class="dev ok">✓ '+esc(device.name||'device')+' <small>connected, OBD adapter confirmed</small></div>');
+  for(const r of rejected) items.push('<div class="dev bad">'+esc(r.name)+' <small>— '+esc(r.reason)+'</small> <a href="#" data-id="'+esc(r.id)+'">forget</a></div>');
+  $('devCard').style.display=items.length?'':'none'; $('devList').innerHTML=items.join('');
+}
+$('devList').addEventListener('click',ev=>{ const a=ev.target.closest&&ev.target.closest('a[data-id]'); if(!a) return; ev.preventDefault(); rejected=rejected.filter(r=>r.id!==a.dataset.id); saveRejected(); renderDevices(); });
+
+// Chrome only allows exclusionFilters together with filters, so match any named device and exclude the rejected names.
+function pickerOptions(services){
+  const names=[...new Set(rejected.map(r=>r.name).filter(n=>n&&n!=='(unnamed)'))];
+  if(!names.length) return {acceptAllDevices:true, optionalServices:services};
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-.:@#()[]!$%&*+/=<>?^~';
+  return {filters:[...chars].map(c=>({namePrefix:c})), exclusionFilters:names.map(n=>({name:n})), optionalServices:services};
+}
+
+// Is it an ELM327-style OBD adapter? It must answer AT commands with a prompt, and identify itself or accept ATE0.
+async function verifyDongle(){
+  let r=await send('ATZ',3500), banner=(r||'').replace(/\s+/g,' ').trim();
+  if(!r){ r=await send('ATI',2000); banner=(r||'').replace(/\s+/g,' ').trim(); if(!r) return {ok:false, reason:'did not answer OBD adapter commands'}; }
+  const known=/ELM|STN|OBDLINK|OBD ?II|V-?LINK|VGATE|ICAR/i.test(banner);
+  const e=await send('ATE0',1500);
+  if(known || /OK/.test(e||'')){ log('Adapter says: '+(banner||'(no banner)')); return {ok:true,banner}; }
+  return {ok:false, reason:'replied, but not like an ELM327-style OBD adapter'+(banner?' ("'+banner.slice(0,30)+'")':'')};
+}
+
+async function rejectDevice(reason){
+  const dev=device, name=(dev&&dev.name)||'(unnamed)';
+  if(dev && !rejected.some(r=>r.id===dev.id)){ rejected.push({id:dev.id,name,reason}); saveRejected(); }
+  suppressDisc=true; setTimeout(()=>{suppressDisc=false;},2000);
+  try{ nChar&&nChar.removeEventListener('characteristicvaluechanged', onNotify); }catch(e){}
+  try{ dev&&dev.gatt&&dev.gatt.connected&&dev.gatt.disconnect(); }catch(e){}
+  device=null; server=null; nChar=null; wChar=null; connected=false; pending=null; rxBuf='';
+  lastReject='"'+name+'" is not an OBD dongle ('+reason+'). Disconnected.';
+  setStatus(lastReject+' Choose another device.'); log('Rejected '+name+': '+reason);
+  $('notice').textContent='⚠ '+lastReject; $('notice').style.display='';
+  renderDevices();
+  await connect(true);          // reopen the device list
+}
+
+async function connect(auto){
   if(!navigator.bluetooth){ setStatus('This browser has no Web Bluetooth. Use Chrome on Android.'); return; }
   try{
-    setStatus('Choose your dongle...');
+    if(auto!==true) setStatus('Choose your dongle...');
     const services=[...SERVICES]; const x=$('extraSvc').value.trim(); if(x) services.push(x.toLowerCase());
-    if(!device) device = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:services});
-    device.addEventListener('gattserverdisconnected', onDisc);
+    if(!device) device = await navigator.bluetooth.requestDevice(pickerOptions(services));
+    if(rejected.some(r=>r.id===device.id)) return await rejectDevice('you picked one that already failed the check');
+    if(!device.__l){ device.addEventListener('gattserverdisconnected', onDisc); device.__l=true; }
     setStatus('Connecting to '+(device.name||'device')+'...');
     server = await device.gatt.connect();
-    const {n,w} = await findChars(); nChar=n; wChar=w;
+    let ch; try{ ch=await findChars(); }catch(e){ if(e.noUart) return await rejectDevice('no serial-style Bluetooth service'); throw e; }
+    nChar=ch.n; wChar=ch.w;
     await nChar.startNotifications();
     nChar.addEventListener('characteristicvaluechanged', onNotify);
-    connected=true;
+    setStatus('Checking that it is an OBD adapter...');
+    const v=await verifyDongle();
+    if(!v.ok) return await rejectDevice(v.reason);
+    connected=true; renderDevices(); $('notice').style.display='none';
     await initElm();
     $('btnStart').disabled=false; $('probeGo').disabled=false; $('sweepGo').disabled=false;
     $('btnConnect').textContent='Reconnect';
-  }catch(e){ setStatus('Connect failed: '+e.message); log('ERR '+e.message); connected=false; }
+  }catch(e){
+    connected=false;
+    if(auto===true && /NotFound|NotAllowed|Security/.test(e.name||'')) setStatus(lastReject+' Tap Connect to choose another.');
+    else { setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
+  }
 }
 function onDisc(){
+  if(suppressDisc){ suppressDisc=false; return; }
   connected=false; const was=running; running=false;
   $('btnStart').disabled=true; $('probeGo').disabled=true; $('sweepGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
-  log('Disconnected'); saveLocal();
+  log('Disconnected'); saveLocal(); renderDevices();
 }
 
 async function initElm(){
   setStatus('Initialising dongle...');
-  await send('ATZ',3000);
   for(const c of ['ATE0','ATL0','ATS0','ATH0','ATAT2','ATST 20','ATSP0']) { const r=await send(c); log(c+' -> '+(r?r.trim().replace(/\s+/g,' '):'(no reply)')); }
   setStatus('Talking to the car (ignition on)...');
   const r=await send('0100',12000);
@@ -526,7 +591,7 @@ $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','te
 $('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCard').style.display=ex?'none':''; $('exploreCard').style.display=ex?'':'none'; $('ecuSel').disabled=ex; };
 
 $('btnStart').onclick=()=>{ if(running){ running=false; } else startLogging(); };
-$('btnConnect').onclick=connect;
+$('btnConnect').onclick=()=>connect();
 $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
 
 // ---- UI refresh ----
