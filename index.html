@@ -41,6 +41,7 @@
 <div class="card">
   <div class="row">
     <button id="btnConnect" class="primary">Connect dongle</button>
+    <button id="btnAll" title="Show every Bluetooth device, including ones that failed the check">Show all devices</button>
     <select id="ecuSel" title="Which control unit to read">
       <option value="all">All ECUs (broadcast)</option>
       <option value="0">ECU 1 only (engine, 7E0)</option>
@@ -132,7 +133,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-d · device vetting</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-e · show-all button</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -251,7 +252,8 @@ class Poller {
 <script id="app">
 // ---------- App / BLE / UI ----------
 const $ = id => document.getElementById(id);
-const SERVICES = [0xfff0,0xffe0,0x18f0,0xfff1,0xae00,
+const SERVICES = [0xfff0,0xffe0,0x18f0,0xfff1,0xae00,0xffb0,0xffc0,0xffd0,0xffe5,0xfee7,
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e','00001101-0000-1000-8000-00805f9b34fb','ba11f08c-5f14-0b0d-1080-007cbe238851','f000ffc0-0451-4000-b000-000000000000',
   '49535343-fe7d-4ae5-8fa9-9fafd205e455','e7810a71-73ae-499d-8c15-faa9aef0c3f2',
   '0000fff0-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb'];
 let device=null, server=null, wChar=null, nChar=null;
@@ -326,7 +328,7 @@ $('devList').addEventListener('click',ev=>{ const a=ev.target.closest&&ev.target
 
 // Chrome only allows exclusionFilters together with filters, so match any named device and exclude the rejected names.
 function pickerOptions(services){
-  const names=[...new Set(rejected.map(r=>r.name).filter(n=>n&&n!=='(unnamed)'))];
+  const names=[...new Set(rejected.filter(r=>r.hide!==false).map(r=>r.name).filter(n=>n&&n!=='(unnamed)'))];
   if(!names.length) return {acceptAllDevices:true, optionalServices:services};
   const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-.:@#()[]!$%&*+/=<>?^~';
   return {filters:[...chars].map(c=>({namePrefix:c})), exclusionFilters:names.map(n=>({name:n})), optionalServices:services};
@@ -342,9 +344,9 @@ async function verifyDongle(){
   return {ok:false, reason:'replied, but not like an ELM327-style OBD adapter'+(banner?' ("'+banner.slice(0,30)+'")':'')};
 }
 
-async function rejectDevice(reason){
+async function rejectDevice(reason, hide){
   const dev=device, name=(dev&&dev.name)||'(unnamed)';
-  if(dev && !rejected.some(r=>r.id===dev.id)){ rejected.push({id:dev.id,name,reason}); saveRejected(); }
+  if(dev && !rejected.some(r=>r.id===dev.id)){ rejected.push({id:dev.id,name,reason,hide:hide!==false}); saveRejected(); }
   suppressDisc=true; setTimeout(()=>{suppressDisc=false;},2000);
   try{ nChar&&nChar.removeEventListener('characteristicvaluechanged', onNotify); }catch(e){}
   try{ dev&&dev.gatt&&dev.gatt.connected&&dev.gatt.disconnect(); }catch(e){}
@@ -356,17 +358,19 @@ async function rejectDevice(reason){
   await connect(true);          // reopen the device list
 }
 
-async function connect(auto){
+async function connect(auto, showAll){
   if(!navigator.bluetooth){ setStatus('This browser has no Web Bluetooth. Use Chrome on Android.'); return; }
   try{
     if(auto!==true) setStatus('Choose your dongle...');
     const services=[...SERVICES]; const x=$('extraSvc').value.trim(); if(x) services.push(x.toLowerCase());
-    if(!device) device = await navigator.bluetooth.requestDevice(pickerOptions(services));
-    if(rejected.some(r=>r.id===device.id)) return await rejectDevice('you picked one that already failed the check');
+    if(showAll===true && device && !connected){ device=null; }
+    if(!device) device = await navigator.bluetooth.requestDevice(showAll===true ? {acceptAllDevices:true, optionalServices:services} : pickerOptions(services));
+    if(showAll===true){ rejected=rejected.filter(r=>r.id!==device.id); saveRejected(); renderDevices(); }
+    else if(rejected.some(r=>r.id===device.id)) return await rejectDevice('you picked one that already failed the check');
     if(!device.__l){ device.addEventListener('gattserverdisconnected', onDisc); device.__l=true; }
     setStatus('Connecting to '+(device.name||'device')+'...');
     server = await device.gatt.connect();
-    let ch; try{ ch=await findChars(); }catch(e){ if(e.noUart) return await rejectDevice('no serial-style Bluetooth service'); throw e; }
+    let ch; try{ ch=await findChars(); }catch(e){ if(e.noUart) return await rejectDevice('no known serial service. If this IS your dongle, add its service UUID under Advanced, then use Show all devices', false); throw e; }
     nChar=ch.n; wChar=ch.w;
     await nChar.startNotifications();
     nChar.addEventListener('characteristicvaluechanged', onNotify);
@@ -380,6 +384,7 @@ async function connect(auto){
   }catch(e){
     connected=false;
     if(auto===true && /NotFound|NotAllowed|Security/.test(e.name||'')) setStatus(lastReject+' Tap Connect to choose another.');
+    else if(e.name==='NotFoundError'){ setStatus('No device chosen. Dongle not listed? Forget it in Android Bluetooth settings, close other OBD apps, turn Location on, plug it in with the ignition on, then tap Show all devices.'); }
     else { setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
   }
 }
@@ -592,6 +597,7 @@ $('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCa
 
 $('btnStart').onclick=()=>{ if(running){ running=false; } else startLogging(); };
 $('btnConnect').onclick=()=>connect();
+$('btnAll').onclick=()=>connect(false,true);
 $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
 
 // ---- UI refresh ----
