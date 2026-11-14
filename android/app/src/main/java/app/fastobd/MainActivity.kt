@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -37,9 +38,9 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         web = WebView(this)
         setContentView(web)
+        web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = false
@@ -63,7 +64,25 @@ class MainActivity : Activity() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             need.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
+        startKeepAlive()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        startKeepAlive()
+    }
+
+    // A foreground service keeps the app (and its Bluetooth link) alive with the screen off or another app on top.
+    private fun startKeepAlive() {
+        try {
+            if (Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                startForegroundService(Intent(this, KeepAliveService::class.java))
+            }
+        } catch (e: Exception) { }
     }
 
     private fun js(code: String) {
@@ -77,6 +96,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         selfClose = true
+        stopService(Intent(this, KeepAliveService::class.java))
         try { socket?.close() } catch (e: IOException) { }
         super.onDestroy()
     }
@@ -87,6 +107,14 @@ class MainActivity : Activity() {
             return Build.VERSION.SDK_INT < 31 ||
                 (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
                  checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED)
+        }
+
+        @JavascriptInterface
+        fun keepAwake(on: Boolean) {
+            runOnUiThread {
+                if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
 
         @JavascriptInterface

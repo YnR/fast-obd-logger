@@ -60,6 +60,7 @@
     <p><small>Extra BLE service UUID (only if your dongle isn't found):</small><br>
     <input id="extraSvc" placeholder="e.g. 0000fff0-0000-1000-8000-00805f9b34fb" style="width:100%;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg)"></p>
     <label class="chk"><input type="checkbox" id="useGps" checked> Log phone GPS</label>
+    <label class="chk" id="keepRow" style="display:none"><input type="checkbox" id="keepOn" checked> Keep screen on (untick to let the screen sleep; the app keeps logging in the background)</label>
     <label class="chk"><input type="checkbox" id="useMotion" checked> Log phone accelerometer</label>
   </details>
 </div>
@@ -136,7 +137,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-k · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-l · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -481,6 +482,12 @@ async function autoLoop(){
   autoBusy=false;
 }
 if(NATIVE) setTimeout(()=>{ if(autoOn() && lastDev) autoLoop(); },1500);
+if(NATIVE){
+  $('keepRow').style.display='';
+  try{ const k=localStorage.getItem('obd_keep'); if(k!==null) $('keepOn').checked=(k==='1'); }catch(e){}
+  const applyKeep=()=>{ try{ AndroidBT.keepAwake($('keepOn').checked); }catch(e){} try{ localStorage.setItem('obd_keep',$('keepOn').checked?'1':'0'); }catch(e){} };
+  $('keepOn').onchange=applyKeep; applyKeep();
+}
 
 function onDisc(){
   if(suppressDisc){ suppressDisc=false; return; }
