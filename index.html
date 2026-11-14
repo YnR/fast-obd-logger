@@ -155,6 +155,9 @@
   <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
   <small>One line per module: address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
   <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Scan only when parked (P or N, speed 0). Off = scan while driving.</label>
+  <div id="fsBanner" style="display:none;padding:12px;border-radius:10px;font-weight:700;font-size:17px;margin-top:10px"></div>
+  <div style="background:#2a323d;border-radius:8px;height:22px;overflow:hidden;margin-top:8px"><div id="fsBar" style="height:100%;width:0;background:#3ecf8e;transition:width .3s"></div></div>
+  <div id="fsPct" style="font-size:20px;font-weight:700;margin-top:6px">0%</div>
   <div class="row" style="margin-top:8px">
     <button id="fsGo" disabled>Start / continue</button>
     <button id="fsStop" style="display:none" class="stop">Pause</button>
@@ -929,6 +932,21 @@ async function fsParked(){
   if(lever!==0x0B && lever!==0x09) return 'lever not in P or N';
   return '';
 }
+function fsUI(st){
+  const b=$('fsBanner');
+  if(!st||!st.plan||!st.plan.length){ $('fsBar').style.width='0'; $('fsPct').textContent='0%'; b.style.display='none'; return; }
+  const total=st.plan.reduce((a,r)=>a+(r.to-r.from+1),0);
+  let d=0; for(let j=0;j<st.i&&j<st.plan.length;j++) d+=st.plan[j].to-st.plan[j].from+1;
+  if(st.i<st.plan.length && st.did!=null) d+=st.did-st.plan[st.i].from;
+  if(st.done) d=total;
+  const pct=total?d/total*100:0;
+  $('fsBar').style.width=pct.toFixed(1)+'%';
+  $('fsPct').textContent=pct.toFixed(1)+'%  ('+d.toLocaleString()+' of '+total.toLocaleString()+' IDs) · found '+st.found.length;
+  b.style.display='';
+  if(st.done){ b.style.background='#14764a'; b.style.color='#fff'; b.textContent='SCAN COMPLETE. You can switch to Normal mode now.'; }
+  else if(fsActive){ b.style.background='#1f4f8a'; b.style.color='#fff'; b.textContent='SCANNING. Screen can be off. Not finished yet.'; }
+  else { b.style.background='#9a5b00'; b.style.color='#fff'; b.textContent='NOT FINISHED. Stopped at '+pct.toFixed(1)+'%. Tap Start / continue.'; }
+}
 function fsRefresh(){
   const sc=$('modeSel').value==='scan';
   $('fsGo').disabled=!sc || fsActive || !connected || running || scanning;
@@ -980,6 +998,7 @@ async function fullScan(){
       if(st.did>r.to){ st.i++; st.did=null; st.miss=0; if(st.i>=st.plan.length){ st.done=true; } }
       else if(cur%16===0){ fsSave(st); }
       $('fsProg').textContent=fsPos(st)+' · found '+st.found.length+' · saved '+new Date().toLocaleTimeString();
+      fsUI(st);
     }
   }catch(e){ say('Error: '+e.message); }
   fsActive=false;
@@ -987,14 +1006,16 @@ async function fullScan(){
   const ok=fsSave(st);
   if(st.done) say('Full scan finished. Found '+st.found.length+'. Tap Save report.');
   if(ok) $('fsProg').textContent=(st.done?'Finished':'Stopped')+' · '+fsPos(st)+' · found '+st.found.length+' · saved '+new Date(st.saved).toLocaleTimeString();
+  fsUI(st);
   fsRefresh();
 }
+fsUI(fsLoad());
 $('fsPlan').value=(fsLoad()&&fsLoad().plan)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
 try{ $('fsParkedOnly').checked=localStorage.getItem('obd_fs_parkedonly')==='1'; }catch(e){}
 $('fsParkedOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_parkedonly',$('fsParkedOnly').checked?'1':'0'); }catch(e){} };
 $('fsGo').onclick=fullScan;
 $('fsStop').onclick=()=>{ fsActive=false; };
-$('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsRefresh(); };
+$('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsUI(null); fsRefresh(); };
 $('fsSave').onclick=()=>{ const st=fsLoad(); if(!st) return; const lines=['Fast OBD Logger full scan '+new Date().toISOString(),'plan:'].concat(st.plan.map(p=>'  '+p.tx+' '+fsH4(p.from)+'-'+fsH4(p.to)),['',st.found.length+' data IDs answered:'],st.found.map(f=>f.tx+' '+f.raw+' '+f.hex)); saveFile(lines.join('\n'),'obd_fullscan','txt','text/plain'); };
 setInterval(fsRefresh,1000);
 
