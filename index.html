@@ -90,8 +90,7 @@
   <b>Guided decoding tests</b> <small>each one logs the transmission computer's live data, walks you through the steps, and saves its own file</small>
   <div class="row" style="margin:8px 0">
     <button class="gt" data-test="selector">1 · Selector P-R-N-D (parked)</button>
-    <button class="gt" data-test="gears">2 · Gears (manual mode)</button>
-    <button class="gt" data-test="lockup">3 · Lock-up (cruise)</button>
+    <button class="gt" data-test="drive">2 · Drive test (gears and lock-up)</button>
   </div>
   <p><small>Start every test stopped, engine running. Tap the big NEXT button at the top at each step; it turns green once the step has been held long enough.</small></p>
   <hr style="border:0;border-top:1px solid #2a323c">
@@ -171,7 +170,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-t · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-u · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -739,14 +738,10 @@ const TESTS={
     {id:'N',  t:'Foot on brake: shift to N and hold.', hold:5},
     {id:'D',  t:'Foot on brake: shift to D and hold.', hold:5},
     {id:'P2', t:'Back to P and hold.', hold:5}]},
-  gears:{name:'Gear test', steps:()=>{
-    const s=[{id:'prep', t:'Stopped: put the lever in manual mode, gear 1. Tap NEXT, then drive off.', hold:2}];
-    for(let g=1;g<=8;g++) s.push({id:'up'+g, gear:g, t:'Hold gear '+g+'. Tap NEXT the moment you shift UP to '+(g+1)+'.', hold:5, alt:g>1});
-    s[s.length-1].t='Hold gear 8. Tap NEXT the moment you shift DOWN to 7.';
-    return s; }},
-  lockup:{name:'Lock-up test', steps:()=>[
-    {id:'accel',   t:'In D: get to a steady 40 to 50 mph, then tap NEXT.', hold:5},
-    {id:'cruise1', t:'Hold speed steady, pedal still.', hold:20},
+  drive:{name:'Drive test', steps:()=>[
+    {id:'prep',    t:'Stopped, lever in D. Tap NEXT, then drive off.', hold:2},
+    {id:'drive',   t:'Drive normally: a few stops and starts, and up to 40 to 50 mph if you can. Any order.', hold:120},
+    {id:'cruise1', t:'Now hold a steady 40 to 50 mph, pedal still.', hold:20},
     {id:'press1',  t:'Press the pedal a little more for 3 seconds.', hold:3},
     {id:'cruise2', t:'Ease back to steady speed and hold.', hold:10},
     {id:'press2',  t:'Press a little more again for 3 seconds.', hold:3},
