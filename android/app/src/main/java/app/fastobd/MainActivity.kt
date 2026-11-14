@@ -151,8 +151,28 @@ class MainActivity : Activity() {
                     close()
                     val a = adapter() ?: throw IOException("Bluetooth is off")
                     try { a.cancelDiscovery() } catch (e: SecurityException) { }
-                    val s = a.getRemoteDevice(addr).createRfcommSocketToServiceRecord(spp)
-                    s.connect()
+                    val dev = a.getRemoteDevice(addr)
+                    // Try the standard way first, then two well-known fallbacks for adapters that refuse it.
+                    var s: BluetoothSocket? = null
+                    var err = "connection failed"
+                    for (mode in 0..2) {
+                        var c: BluetoothSocket? = null
+                        try {
+                            c = when (mode) {
+                                0 -> dev.createRfcommSocketToServiceRecord(spp)
+                                1 -> dev.createInsecureRfcommSocketToServiceRecord(spp)
+                                else -> dev.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType).invoke(dev, 1) as BluetoothSocket
+                            }
+                            c.connect()
+                            s = c
+                            break
+                        } catch (e: Exception) {
+                            if (mode == 0) err = e.message ?: err
+                            try { c?.close() } catch (x: Exception) { }
+                            Thread.sleep(400)
+                        }
+                    }
+                    if (s == null) throw IOException(err)
                     selfClose = false
                     socket = s
                     js("window.__btConnected(true,'')")
