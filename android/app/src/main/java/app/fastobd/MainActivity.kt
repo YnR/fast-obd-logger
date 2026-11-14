@@ -56,8 +56,9 @@ class MainActivity : Activity() {
 
     private fun askPermissions() {
         val need = ArrayList<String>()
-        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            need.add(Manifest.permission.BLUETOOTH_CONNECT)
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.BLUETOOTH_CONNECT)
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.BLUETOOTH_SCAN)
         }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             need.add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -84,7 +85,8 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun hasPerm(): Boolean {
             return Build.VERSION.SDK_INT < 31 ||
-                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                 checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED)
         }
 
         @JavascriptInterface
@@ -115,7 +117,7 @@ class MainActivity : Activity() {
                 try {
                     close()
                     val a = adapter() ?: throw IOException("Bluetooth is off")
-                    a.cancelDiscovery()
+                    try { a.cancelDiscovery() } catch (e: SecurityException) { }
                     val s = a.getRemoteDevice(addr).createRfcommSocketToServiceRecord(spp)
                     s.connect()
                     selfClose = false
