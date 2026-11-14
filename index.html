@@ -59,6 +59,19 @@
 </div>
 
 <div class="card">
+  <details>
+    <summary>Probe (car parked, read-only)</summary>
+    <p><small>Sends one read request (services 01, 09 or 22 only) and shows the raw reply. Nothing else is allowed. Don't use while driving or while logging.</small></p>
+    <div class="row">
+      <select id="probeEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1" selected>ECU 2 (7E1)</option></select>
+      <input id="probeCmd" placeholder="e.g. 22 01 01" style="flex:1;min-width:120px;padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+      <button id="probeGo" disabled>Send</button>
+    </div>
+    <pre id="probeOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
+  </details>
+</div>
+
+<div class="card">
   <div class="row">
     <button id="btnStart" class="go" disabled>Start logging</button>
     <button id="btnSave" disabled>Save CSV</button>
@@ -247,13 +260,13 @@ async function connect(){
     nChar.addEventListener('characteristicvaluechanged', onNotify);
     connected=true;
     await initElm();
-    $('btnStart').disabled=false;
+    $('btnStart').disabled=false; $('probeGo').disabled=false;
     $('btnConnect').textContent='Reconnect';
   }catch(e){ setStatus('Connect failed: '+e.message); log('ERR '+e.message); connected=false; }
 }
 function onDisc(){
   connected=false; const was=running; running=false;
-  $('btnStart').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  $('btnStart').disabled=true; $('probeGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
   log('Disconnected'); saveLocal();
 }
@@ -267,18 +280,49 @@ async function initElm(){
   if(!r || !/41\s*00/i.test(r.replace(/\s+/g,' '))){ setStatus('Car did not answer 0100: '+(r||'no reply').trim()); throw new Error('no ECU reply'); }
   const proto=((await send('ATDPN'))||'').trim().replace(/^A/,'');
   log('Protocol '+proto);
-  const ecu=$('ecuSel').value;
-  window.__expect='';
-  if(ecu!=='all'){
-    if(proto==='6'||proto==='8'){
-      const tx=ecu==='0'?'7E0':'7E1', rx=ecu==='0'?'7E8':'7E9';
-      log('ATSH '+tx+' -> '+(await send('ATSH '+tx)||'').trim());
-      log('ATCRA '+rx+' -> '+(await send('ATCRA '+rx)||'').trim());
-      window.__expect=' 1';
-    } else { log('ECU targeting needs 11-bit CAN; staying on broadcast.'); }
-  }
+  window.__proto=proto;
+  await applyTarget();
   setStatus('Ready. Protocol '+proto+'.');
 }
+
+// Set the ELM request/response addressing to match the ECU dropdown.
+async function applyTarget(){
+  const ecu=$('ecuSel').value, proto=window.__proto;
+  window.__expect='';
+  if(ecu!=='all' && (proto==='6'||proto==='8')){
+    const tx=ecu==='0'?'7E0':'7E1', rx=ecu==='0'?'7E8':'7E9';
+    log('ATSH '+tx+' -> '+(await send('ATSH '+tx)||'').trim());
+    log('ATCRA '+rx+' -> '+(await send('ATCRA '+rx)||'').trim());
+    window.__expect=' 1';
+  } else {
+    if(ecu!=='all') log('ECU targeting needs 11-bit CAN; staying on broadcast.');
+    await send('ATAR'); await send('ATSH 7DF');
+  }
+}
+
+// ---- read-only probe ----
+const NEG={'11':'service not supported','12':'sub-function not supported','13':'bad message length','22':'conditions not correct','31':'request out of range (identifier not supported)','33':'security access denied','7E':'not supported in this session','7F':'service not supported in this session','78':'response pending'};
+async function probe(){
+  if(running||!connected) return;
+  const raw=$('probeCmd').value.replace(/\s+/g,'').toUpperCase();
+  const out=$('probeOut');
+  if(!/^(01|09|22)([0-9A-F]{2})+$/.test(raw)){ out.textContent='Only read requests are allowed: start with 01, 09 or 22, hex bytes only (e.g. 22 01 01).'; return; }
+  const tx=$('probeEcu').value, rx=tx==='7E0'?'7E8':'7E9';
+  if(window.__proto!=='6'&&window.__proto!=='8'){ out.textContent='Probe needs 11-bit CAN (protocol 6 or 8). This car reports '+window.__proto+'.'; return; }
+  $('probeGo').disabled=true; out.textContent='Sending...';
+  try{
+    await send('ATSH '+tx); await send('ATCRA '+rx);
+    const r=await send(raw,4000);
+    let txt=(r||'(no reply)').trim();
+    const m=txt.replace(/\s+/g,'').match(/7F([0-9A-F]{2})([0-9A-F]{2})/);
+    if(m) txt+='\n=> negative response to service '+m[1]+': '+(NEG[m[2]]||'code '+m[2]);
+    out.textContent=tx+' <- '+raw+'\n'+txt;
+    log('Probe '+tx+' '+raw+' -> '+txt.replace(/\s+/g,' '));
+  }catch(e){ out.textContent='Error: '+e.message; }
+  try{ await applyTarget(); }catch(e){}
+  $('probeGo').disabled=false;
+}
+$('probeGo').onclick=probe;
 
 // ---- logging loop ----
 const HEADER=['t_s','epoch_ms','group',...ORDER.map(p=>PIDS[p].name),'auto_dip','mark','gps_lat','gps_lon','gps_mph','phone_ax','phone_ay','phone_az'];
@@ -300,6 +344,7 @@ async function startLogging(){
     window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a) lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)};});
   }
   try{ wakeLock=await navigator.wakeLock?.request('screen'); }catch(e){}
+  try{ await applyTarget(); }catch(e){ log('Target setup error: '+e.message); }
   const groups=makeGroups(sel);
   const poller=new Poller(send, window.__expect||'', log);
   running=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;

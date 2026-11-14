@@ -9,6 +9,7 @@ A single-page web app that logs OBD-II data from a **BLE ELM327-style dongle** a
 - Optional ECU targeting (engine ECU 7E0 / second ECU 7E1) on 11-bit CAN
 - Polls pedal D/E, commanded throttle, torque, RPM and speed every cycle; rotates in the rest
 - Live plot, auto-detection of brief pedal-signal dips, and an "I FELT IT" marker button
+- Read-only probe (services 01, 09, 22 only) for checking what an ECU answers, with the car parked
 - CSV export (with phone GPS and accelerometer), plus a recoverable autosave
 
 ## Notes
