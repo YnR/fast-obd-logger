@@ -32,6 +32,7 @@
   .dev{padding:6px 10px;border-radius:8px;margin:4px 0;background:#232a33}
   .dev.ok{color:var(--ok)}
   .dev.bad{opacity:.4}
+  .dev.pick{border:1px solid var(--acc);cursor:pointer;padding:12px 10px}
   .dev a{color:var(--acc);margin-left:6px}
 </style>
 </head>
@@ -133,7 +134,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-e · show-all button</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-f · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -278,14 +279,17 @@ function setStatus(m){ $('status').textContent=m; }
 const selectedPids = ()=>[...document.querySelectorAll('#pidList input:checked')].map(i=>i.dataset.pid);
 
 // ---- BLE transport ----
-function onNotify(ev){
-  rxBuf += dec.decode(ev.target.value);
+const NATIVE = (typeof AndroidBT!=='undefined');   // true inside the Android app (classic Bluetooth bridge)
+function onNotify(ev){ onData(dec.decode(ev.target.value)); }
+function onData(t){
+  rxBuf += t;
   if(rxBuf.includes('>')){
     const t=rxBuf; rxBuf='';
     if(pending){ const p=pending; pending=null; clearTimeout(p.to); p.resolve(t.replace(/>/g,'')); }
   }
 }
 async function writeStr(s){
+  if(NATIVE){ AndroidBT.write(s); return; }
   const data=enc.encode(s);
   for(let i=0;i<data.length;i+=20){
     const ch=data.slice(i,i+20);
@@ -320,11 +324,12 @@ try{ rejected=JSON.parse(localStorage.getItem('obd_rejected')||'[]'); }catch(e){
 const saveRejected=()=>{ try{ localStorage.setItem('obd_rejected', JSON.stringify(rejected)); }catch(e){} };
 function renderDevices(){
   const items=[];
+  if(pickList) for(const d of pickList) items.push('<div class="dev pick" data-addr="'+esc(d.addr)+'"><b>'+esc(d.name||'(unnamed)')+'</b> <small>'+esc(d.addr)+' — tap to use</small></div>');
   if(device&&connected) items.push('<div class="dev ok">✓ '+esc(device.name||'device')+' <small>connected, OBD adapter confirmed</small></div>');
   for(const r of rejected) items.push('<div class="dev bad">'+esc(r.name)+' <small>— '+esc(r.reason)+'</small> <a href="#" data-id="'+esc(r.id)+'">forget</a></div>');
   $('devCard').style.display=items.length?'':'none'; $('devList').innerHTML=items.join('');
 }
-$('devList').addEventListener('click',ev=>{ const a=ev.target.closest&&ev.target.closest('a[data-id]'); if(!a) return; ev.preventDefault(); rejected=rejected.filter(r=>r.id!==a.dataset.id); saveRejected(); renderDevices(); });
+$('devList').addEventListener('click',ev=>{ const p=ev.target.closest&&ev.target.closest('.pick'); if(p&&pickRes){ const f=pickRes; pickRes=null; f(p.dataset.addr); return; } const a=ev.target.closest&&ev.target.closest('a[data-id]'); if(!a) return; ev.preventDefault(); rejected=rejected.filter(r=>r.id!==a.dataset.id); saveRejected(); renderDevices(); });
 
 // Chrome only allows exclusionFilters together with filters, so match any named device and exclude the rejected names.
 function pickerOptions(services){
@@ -350,6 +355,7 @@ async function rejectDevice(reason, hide){
   suppressDisc=true; setTimeout(()=>{suppressDisc=false;},2000);
   try{ nChar&&nChar.removeEventListener('characteristicvaluechanged', onNotify); }catch(e){}
   try{ dev&&dev.gatt&&dev.gatt.connected&&dev.gatt.disconnect(); }catch(e){}
+  if(NATIVE){ try{ AndroidBT.close(); }catch(e){} }
   device=null; server=null; nChar=null; wChar=null; connected=false; pending=null; rxBuf='';
   lastReject='"'+name+'" is not an OBD dongle ('+reason+'). Disconnected.';
   setStatus(lastReject+' Choose another device.'); log('Rejected '+name+': '+reason);
@@ -359,6 +365,7 @@ async function rejectDevice(reason, hide){
 }
 
 async function connect(auto, showAll){
+  if(NATIVE) return await connectNative(auto);
   if(!navigator.bluetooth){ setStatus('This browser has no Web Bluetooth. Use Chrome on Android.'); return; }
   try{
     if(auto!==true) setStatus('Choose your dongle...');
@@ -387,6 +394,40 @@ async function connect(auto, showAll){
     else if(e.name==='NotFoundError'){ setStatus('No device chosen. Dongle not listed? Forget it in Android Bluetooth settings, close other OBD apps, turn Location on, plug it in with the ignition on, then tap Show all devices.'); }
     else { setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
   }
+}
+// ---- Android app: classic Bluetooth (SPP/RFCOMM) through the native bridge ----
+let pickList=null, pickRes=null, nativeConnRes=null;
+if(NATIVE){
+  window.__btRx = onData;
+  window.__btClosed = ()=>onDisc();
+  window.__btConnected = (ok,msg)=>{ if(nativeConnRes){ const f=nativeConnRes; nativeConnRes=null; f({ok:ok,msg:msg}); } };
+}
+function pickPaired(list){ return new Promise(res=>{ pickList=list; pickRes=res; renderDevices(); }); }
+async function connectNative(auto){
+  try{
+    if(AndroidBT.refresh){ AndroidBT.refresh(); await new Promise(r=>setTimeout(r,700)); }
+    if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); setStatus('Allow the Bluetooth permission, then tap Connect again.'); return; }
+    let list=[]; try{ list=JSON.parse(AndroidBT.listPaired()); }catch(e){}
+    list=list.filter(d=>!rejected.some(r=>r.id===d.addr));
+    if(!list.length){ setStatus('No usable paired devices. Pair the OBDLink in Android Bluetooth settings first (PIN 1234 or 0000 if asked), then tap Connect.'); renderDevices(); return; }
+    if(auto!==true) setStatus('Tap your OBD dongle in the list below...');
+    else setStatus(lastReject+' Tap another device below.');
+    const addr=await pickPaired(list);
+    pickList=null; pickRes=null;
+    const d=list.find(x=>x.addr===addr)||{name:'device',addr:addr};
+    device={id:d.addr,name:d.name||'(unnamed)'};
+    renderDevices();
+    setStatus('Connecting to '+device.name+'...');
+    const r=await new Promise(res=>{ nativeConnRes=res; AndroidBT.connect(addr); });
+    if(!r.ok){ device=null; setStatus('Could not connect to '+d.name+': '+r.msg+'. Is it plugged in with ignition on, and not used by another app?'); log('ERR '+r.msg); renderDevices(); return; }
+    setStatus('Checking that it is an OBD adapter...');
+    const v=await verifyDongle();
+    if(!v.ok) return await rejectDevice(v.reason);
+    connected=true; renderDevices(); $('notice').style.display='none';
+    await initElm();
+    $('btnStart').disabled=false; $('probeGo').disabled=false; $('sweepGo').disabled=false;
+    $('btnConnect').textContent='Reconnect';
+  }catch(e){ connected=false; pickList=null; setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
 }
 function onDisc(){
   if(suppressDisc){ suppressDisc=false; return; }
@@ -623,6 +664,7 @@ setInterval(()=>{ if(running) saveLocal(); },20000);
 async function saveFile(text, prefix, ext, mime){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
   const name=`${prefix}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  if(NATIVE){ try{ const where=AndroidBT.save(name,text,mime); log('Saved: '+where); setStatus('Saved to '+where); }catch(e){ log('Save failed: '+e.message); } return; }
   const file=new File([text],name,{type:mime});
   try{ if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return; } }catch(e){ if(e.name==='AbortError') return; }
   const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; document.body.appendChild(a); a.click(); a.remove();
@@ -630,7 +672,7 @@ async function saveFile(text, prefix, ext, mime){
 const saveCsv = text => saveFile(text,'obd','csv','text/csv');
 $('btnSave').onclick=()=>saveCsv(csv());
 $('btnRecover').onclick=()=>{ let t=null; try{t=localStorage.getItem('obdlog_last');}catch(e){} if(t) saveCsv(t); else log('Nothing stored.'); };
-if(!navigator.bluetooth) setStatus('This browser has no Web Bluetooth. Open this page in Chrome on Android (https or localhost).');
+if(!NATIVE && !navigator.bluetooth) setStatus('This browser has no Web Bluetooth. Open this page in Chrome on Android (https or localhost).');
 </script>
 </body>
 </html>

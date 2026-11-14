@@ -20,3 +20,8 @@ A single-page web app that logs OBD-II data from a **BLE ELM327-style dongle** a
 - Web Bluetooth needs a secure context (https), so open the GitHub Pages URL, not a local file.
 - iOS Safari does not support Web Bluetooth. Classic-Bluetooth (non-BLE) dongles are not supported.
 - Only reads standard Mode 01 data. It sends no commands that change anything on the car.
+
+## Phone apps (for classic-Bluetooth dongles like the OBDLink MX+)
+The same page runs inside two thin native shells that only move bytes to the dongle:
+- `android/`: classic Bluetooth SPP. A GitHub Action builds the APK and publishes it under Releases ("Android app (latest)"); sideload it.
+- `ios/`: Apple MFi (ExternalAccessory). See `ios/README.md`; build with XcodeGen + Xcode.

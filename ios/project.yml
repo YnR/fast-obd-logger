@@ -1,0 +1,41 @@
+name: FastOBD
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  FastOBD:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - path: ../index.html
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.fastobd
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Fast OBD Logger
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arm64]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIBackgroundModes: [external-accessory]
+        NSLocationWhenInUseUsageDescription: Adds your phone's GPS speed and position to the log.
+        NSBluetoothAlwaysUsageDescription: Connects to your OBD adapter.
+        UISupportedExternalAccessoryProtocols:
+          - com.scantool.obdlink
+          - com.scantool.obdlink.mx
+          - com.scantool.mxplus
+          - com.scantool.mxp
+          - com.obdlink.mx
+          - com.obdlink.mxplus
+          - com.obdsol.obdlink
