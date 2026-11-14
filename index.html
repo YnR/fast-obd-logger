@@ -21,6 +21,7 @@
   .cell b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
   .cell span{color:var(--mut);font-size:11px}
   #status{color:var(--mut)}
+  #markBar{position:sticky;top:0;z-index:50;padding:6px 0;background:var(--bg,#0f1318)}
   #mark{width:100%;font-size:20px;padding:22px;background:var(--warn);color:#241600;font-weight:700}
   canvas{width:100%;height:150px;background:#0d1014;border-radius:8px}
   #log{font:11px/1.35 ui-monospace,monospace;color:var(--mut);max-height:130px;overflow:auto;white-space:pre-wrap}
@@ -37,6 +38,7 @@
 </style>
 </head>
 <body>
+<div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button></div>
 <h1>Fast OBD Logger <small>BLE ELM327</small></h1>
 
 <div class="card">
@@ -129,12 +131,11 @@
 </div>
 
 <div class="card">
-  <button id="mark" disabled>I FELT IT (tap)</button>
   <small>Tap right when you feel a dip. It drops a marker row in the log.</small>
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-f · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-g · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
