@@ -21,7 +21,27 @@
   .cell b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
   .cell span{color:var(--mut);font-size:11px}
   #status{color:var(--mut)}
-  #markBar{position:sticky;top:0;z-index:50;padding:6px 0;background:var(--bg,#0f1318)}
+  #top{position:sticky;top:0;z-index:50;background:var(--bg);padding:6px 0 4px}
+  #tabs{display:flex;gap:6px}
+  .tab{flex:1;padding:10px 4px;font-size:14px;background:#1b2027;color:var(--mut)}
+  .tab.on{background:var(--acc);color:#04121f;font-weight:700}
+  #status{font-size:13px;margin:6px 2px 2px}
+  #markBar{padding:6px 0 0}
+  #tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:10px}
+  .tile{background:#232a33;border-radius:12px;padding:12px;text-align:left;min-height:96px;display:flex;flex-direction:column;gap:4px}
+  .tile b{font-size:15px}
+  .tile .where{font-size:11px;font-weight:700;border-radius:99px;padding:1px 8px;align-self:flex-start}
+  .tile .where.parked{background:#1d4d38;color:#8ff0c2}
+  .tile .where.driving{background:#5a3c00;color:#ffd58a}
+  .tile small{font-size:11px}
+  .tile.done{outline:1px solid var(--ok)}
+  #planList li{margin:6px 0;font-size:16px}
+  #driveOv{position:fixed;inset:0;z-index:200;background:#0b0e12;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:24px;text-align:center}
+  #dTitle{color:var(--mut);font-size:16px;position:absolute;top:18px;left:0;right:0}
+  #dText{font-size:44px;font-weight:800;line-height:1.15}
+  #dSub{font-size:26px;color:var(--warn);margin-top:18px;min-height:34px}
+  #dEnd{position:absolute;bottom:18px;left:18px;right:18px;padding:16px;background:#2b3340}
+  #driveOv.tap{background:#0d2a1c}
   #guide{background:var(--card);border:2px solid var(--acc);border-radius:10px;padding:10px;margin-top:6px}
   #gTitle{color:var(--mut);font-size:13px}
   #gText{font-size:20px;font-weight:700;margin:6px 0 10px}
@@ -43,60 +63,97 @@
 </style>
 </head>
 <body>
-<div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button>
-<div id="guide" style="display:none">
-  <div id="gTitle"></div>
-  <div id="gText"></div>
-  <button id="gNext">NEXT</button>
-  <div class="row"><button id="gAlt" style="display:none"></button><button id="gAbort">End test and save</button></div>
-</div></div>
-<h1>Fast OBD Logger <small>ELM327 / OBDLink</small></h1>
-
-<div class="card">
-  <div class="row">
-    <button id="btnConnect" class="primary">Connect dongle</button>
-    <button id="btnAll" title="Show every Bluetooth device, including ones that failed the check">Show all devices</button>
-    <select id="ecuSel" title="Which control unit to read">
-      <option value="all">All ECUs (broadcast)</option>
-      <option value="0">ECU 1 only (engine, 7E0)</option>
-      <option value="1">ECU 2 only (7E1)</option>
-    </select>
-    <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option><option value="scan">Mode: Full scan</option></select>
-    <label class="chk" style="display:block;margin-top:8px"><input type="checkbox" id="autoMode"> Auto: reconnect to the last dongle, start logging when the car is on, save the file when it turns off</label>
+<div id="top">
+  <div id="tabs">
+    <button class="tab" data-mode="monitor">1 · Monitor</button>
+    <button class="tab" data-mode="sweep">2 · Sweep</button>
+    <button class="tab" data-mode="identify">3 · Identify</button>
   </div>
-  <p id="status">Not connected.</p>
-  <p id="notice" style="display:none;color:var(--warn);font-weight:600"></p>
-  <details>
-    <summary>Advanced</summary>
-    <p><small>Extra BLE service UUID (only if your dongle isn't found):</small><br>
-    <input id="extraSvc" placeholder="e.g. 0000fff0-0000-1000-8000-00805f9b34fb" style="width:100%;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg)"></p>
-    <label class="chk"><input type="checkbox" id="useGps" checked> Log phone GPS</label>
-    <label class="chk" id="keepRow" style="display:none"><input type="checkbox" id="keepOn" checked> Keep screen on (untick to let the screen sleep; the app keeps logging in the background)</label>
-    <label class="chk"><input type="checkbox" id="useMotion" checked> Log phone accelerometer</label>
-  </details>
-</div>
-
-<div class="card" id="devCard" style="display:none">
-  <b>Devices</b> <small>Chrome's picker can't be restyled, so devices that failed the check are hidden there and greyed out here.</small>
-  <div id="devList"></div>
-</div>
-
-<div class="card" id="normalCard">
-  <b>Channels</b> <small>(first 6 ticked are polled every cycle; the rest are rotated in)</small>
-  <div id="pidList"></div>
-</div>
-
-<div class="card" id="exploreCard" style="display:none">
-  <b>Guided decoding tests</b> <small>each one logs the transmission computer's live data, walks you through the steps, and saves its own file</small>
-  <div class="row" style="margin:8px 0">
-    <button class="gt" data-test="selector">1 · Selector P-R-N-D (parked)</button>
-    <button class="gt" data-test="drive">2 · Drive test (gears and lock-up)</button>
+  <div id="status">Not connected.</div>
+  <div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button></div>
+  <div id="guide" style="display:none">
+    <div id="gTitle"></div>
+    <div id="gText"></div>
+    <button id="gNext">NEXT</button>
+    <div class="row"><button id="gAlt" style="display:none"></button><button id="gAbort">End test and save</button></div>
   </div>
-  <p><small>Start every test stopped, engine running. Tap the big NEXT button at the top at each step; it turns green once the step has been held long enough.</small></p>
-  <hr style="border:0;border-top:1px solid #2a323c">
-  <b>Exploratory mode</b> <small>read-only requests to look for gear / lock-up data</small>
-  <p><small>1) Parked, ignition on: tap <b>Sweep</b> to test every request below once. 2) Choose which ECU to log, then <b>Start logging</b> to record the raw replies that answered, plus pedal, RPM and speed, while you shift P-R-N-D and drive. 3) Save the CSV and the sweep report.</small></p>
-  <textarea id="candList" rows="11" spellcheck="false" style="width:100%;font:12px ui-monospace,monospace;background:#232a33;color:var(--fg);border:0;border-radius:8px;padding:8px">
+</div>
+
+<div id="driveOv" style="display:none">
+  <div id="dTitle"></div>
+  <div id="dText"></div>
+  <div id="dSub"></div>
+  <button id="dEnd">End test and save</button>
+</div>
+
+<p id="notice" style="display:none;color:var(--warn);font-weight:600"></p>
+
+<!-- ================= Mode 1: Car monitor ================= -->
+<div class="page" id="pgMonitor">
+  <div class="card">
+    <b>Car monitor</b> <small>logs pedal, engine and transmission data on every drive. Tap I FELT IT the moment the car does its thing.</small>
+    <div class="row" style="margin-top:8px">
+      <button id="btnStart" class="go" disabled>Start logging</button>
+      <button id="btnSave" disabled>Save CSV</button>
+      <button id="btnRecover">Recover last</button>
+    </div>
+    <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
+    <div id="tcmGrid" class="grid" style="margin-bottom:8px">
+      <div class="cell"><span>lever</span><b id="tLever">–</b></div>
+      <div class="cell"><span>gear (provisional)</span><b id="tGear">–</b></div>
+      <div class="cell"><span>turbine rpm</span><b id="tTurb">–</b></div>
+      <div class="cell"><span>converter slip rpm</span><b id="tSlip">–</b></div>
+    </div>
+    <div id="grid" class="grid"></div>
+  </div>
+  <div class="card">
+    <canvas id="plot" width="700" height="300"></canvas>
+    <small>green = pedal D, blue = commanded throttle, orange = engine torque (last 30 s)</small>
+  </div>
+  <div class="card" id="normalCard">
+    <details>
+      <summary>What gets logged</summary>
+      <label class="chk" style="display:block"><input type="checkbox" id="useTcm" checked> Transmission data: lever, gear, turbine speed, converter slip (slows the other channels a little)</label>
+      <label class="chk" style="display:block"><input type="checkbox" id="autoMode"> Auto: reconnect to the last dongle, start when the car is on, save a file when it turns off</label>
+      <p><small>Channels (first 6 ticked are read every cycle; the rest are rotated in):</small></p>
+      <div id="pidList"></div>
+      <select id="ecuSel" title="Which control unit to read" style="margin-top:8px">
+        <option value="all">All ECUs (broadcast)</option>
+        <option value="0">ECU 1 only (engine, 7E0)</option>
+        <option value="1">ECU 2 only (7E1)</option>
+      </select>
+    </details>
+  </div>
+</div>
+
+<!-- ================= Mode 2: Exploratory sweep ================= -->
+<div class="page" id="pgSweep" style="display:none">
+  <div class="card" id="scanModeCard">
+    <b>Exploratory sweep</b> <small>asks each module below for every data ID in the listed ranges (read-only) and keeps what answers. It continues by itself whenever this mode is showing and the car is on, across as many drives as it takes. Progress is saved on this phone.</small>
+    <div id="fsBanner" style="display:none;padding:12px;border-radius:10px;font-weight:700;font-size:17px;margin-top:10px"></div>
+    <div style="background:#2a323d;border-radius:8px;height:22px;overflow:hidden;margin-top:8px"><div id="fsBar" style="height:100%;width:0;background:#3ecf8e;transition:width .3s"></div></div>
+    <div id="fsPct" style="font-size:20px;font-weight:700;margin-top:6px">0%</div>
+    <div id="fsLast" style="color:var(--mut);font-size:13px"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="fsGo" class="go" disabled>Start / continue</button>
+      <button id="fsStop" style="display:none" class="stop">Pause</button>
+      <button id="fsSave">Save file for Claude</button>
+    </div>
+    <div id="fsProg" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
+    <details style="margin-top:8px">
+      <summary>Plan and options</summary>
+      <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
+      <small>One line per range: module address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
+      <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Sweep only when parked (P or N, speed 0). Off = sweep while driving too.</label>
+      <div class="row" style="margin-top:8px"><button id="fsPlanAll">Plan: everything on engine and transmission</button><button id="fsPlanIdent">Plan: identify all modules</button><button id="fsReset">Reset progress</button></div>
+    </details>
+    <pre id="fsOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:200px;overflow:auto"></pre>
+  </div>
+  <div class="card" id="exploreCard">
+    <details>
+      <summary>Other tools (parked): request list, range scan, single request</summary>
+      <p><small>Tap <b>Sweep list</b> to test every request below once. Only services 01, 09 and 22 are allowed.</small></p>
+      <textarea id="candList" rows="11" spellcheck="false" style="width:100%;font:12px ui-monospace,monospace;background:#232a33;color:var(--fg);border:0;border-radius:8px;padding:8px">
 # one request per line: [7E0|7E1] hex bytes   (only services 01, 09, 22 are allowed)
 # controls: identification reads other owners report working on the transmission ECU (not live data)
 7E1 22 F189
@@ -116,78 +173,76 @@
 7E0 22 E0 01
 7E0 22 E0 02
 </textarea>
-  <div class="row" style="margin-top:8px">
-    <button id="sweepGo" disabled>Sweep (parked)</button>
-    <button id="sweepSave" disabled>Save sweep report</button>
-    <select id="exTx"><option value="7E1">Log ECU 2 (7E1)</option><option value="7E0">Log ECU 1 (7E0)</option></select>
+      <div class="row" style="margin-top:8px">
+        <button id="sweepGo" disabled>Sweep list</button>
+        <button id="sweepSave" disabled>Save list report</button>
+        <select id="exTx" style="display:none"><option value="7E1">7E1</option><option value="7E0">7E0</option></select>
+      </div>
+      <pre id="sweepOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
+      <div style="margin-top:10px"><b>Range scan</b> <small>one range, results not kept between sessions</small></div>
+      <div class="row" style="margin-top:6px">
+        <button id="scanQuick" disabled style="display:none">Quick scan</button>
+        <select id="scanEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1">ECU 2 (7E1)</option></select>
+        <input id="scanFrom" value="E000" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+        <span>to</span>
+        <input id="scanTo" value="E0FF" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+        <button id="scanGo" disabled>Scan this range</button>
+        <button id="scanStop" style="display:none" class="stop">Stop scan</button>
+        <button id="scanSave" disabled>Save scan report</button>
+      </div>
+      <div id="scanProg" style="color:var(--mut);font-size:13px;margin-top:4px"></div>
+      <pre id="scanOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:240px;overflow:auto"></pre>
+      <div style="margin-top:10px"><b>Single request</b></div>
+      <div class="row">
+        <select id="probeEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1" selected>ECU 2 (7E1)</option></select>
+        <input id="probeCmd" placeholder="e.g. 22 01 A0" style="flex:1;min-width:120px;padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+        <button id="probeGo" disabled>Send</button>
+      </div>
+      <pre id="probeOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
+    </details>
   </div>
-  <div style="margin-top:10px"><b>Range scan</b> <small>parked, engine idling. Asks for many data IDs (read-only service 22) and lists the ones that answer.</small></div>
-  <div class="row" style="margin-top:6px">
-    <button id="scanQuick" disabled>Quick scan, both ECUs (about 5 to 10 min)</button>
-    <button id="scanStop" style="display:none" class="stop">Stop scan</button>
+</div>
+
+<!-- ================= Mode 3: Identify ================= -->
+<div class="page" id="pgIdentify" style="display:none">
+  <div class="card">
+    <b>Identify what is what</b> <small>each tile is one short test. It records the data blocks while you do one thing at a time, then saves a file for Claude to compare. Parked tests start as soon as you tap them. Driving tests show the whole plan first, then talk you through it so you never have to read while moving.</small>
+    <div id="tiles"></div>
   </div>
-  <div class="row" style="margin-top:6px">
-    <select id="scanEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1">ECU 2 (7E1)</option></select>
-    <input id="scanFrom" value="E000" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
-    <span>to</span>
-    <input id="scanTo" value="E0FF" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
-    <button id="scanGo" disabled>Scan this range</button>
-    <button id="scanSave" disabled>Save scan report</button>
+  <div class="card" id="planCard" style="display:none">
+    <b id="planTitle"></b>
+    <p><small>Read this now, while stopped. Once you start, the phone speaks each cue and you only ever tap anywhere on the screen.</small></p>
+    <ol id="planList"></ol>
+    <div class="row"><button id="planGo" class="go">I have read it. Start</button><button id="planCancel">Cancel</button></div>
   </div>
-  <div id="scanProg" style="color:var(--mut);font-size:13px;margin-top:4px"></div>
-  <pre id="scanOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:240px;overflow:auto"></pre>
-  <pre id="sweepOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
-  <div id="exGrid" class="grid"></div>
+  <div class="card"><small>Live raw blocks during a test:</small><div id="exGrid" class="grid"></div></div>
+</div>
+
+<!-- ================= Shared ================= -->
+<div class="card">
+  <div class="row">
+    <button id="btnConnect" class="primary">Connect dongle</button>
+    <button id="btnAll" title="Show every Bluetooth device, including ones that failed the check">Show all devices</button>
+  </div>
+  <select id="modeSel" style="display:none"><option value="normal">normal</option><option value="explore">explore</option><option value="scan">scan</option></select>
   <details>
-    <summary>Single probe (car parked, read-only)</summary>
-    <p><small>Sends one read request (services 01, 09 or 22 only) and shows the raw reply. Nothing else is allowed. Don't use while driving or while logging.</small></p>
-    <div class="row">
-      <select id="probeEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1" selected>ECU 2 (7E1)</option></select>
-      <input id="probeCmd" placeholder="e.g. 22 01 01" style="flex:1;min-width:120px;padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
-      <button id="probeGo" disabled>Send</button>
-    </div>
-    <pre id="probeOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
+    <summary>Advanced</summary>
+    <p><small>Extra BLE service UUID (only if your dongle isn't found):</small><br>
+    <input id="extraSvc" placeholder="e.g. 0000fff0-0000-1000-8000-00805f9b34fb" style="width:100%;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg)"></p>
+    <label class="chk"><input type="checkbox" id="useGps" checked> Log phone GPS</label>
+    <label class="chk" id="keepRow" style="display:none"><input type="checkbox" id="keepOn" checked> Keep screen on (untick to let the screen sleep; the app keeps working in the background)</label>
+    <label class="chk"><input type="checkbox" id="useMotion" checked> Log phone accelerometer</label>
+    <label class="chk"><input type="checkbox" id="useVoice" checked> Speak test instructions</label>
   </details>
 </div>
 
-<div class="card" id="scanModeCard" style="display:none">
-  <b>Full scan</b> <small>Read-only service 22 over the data IDs below, for each module listed. Runs only while parked in P or N with speed 0, and pauses by itself otherwise. Progress is saved on this phone, so you can stop and continue on later drives.</small>
-  <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
-  <small>One line per module: address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
-  <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Scan only when parked (P or N, speed 0). Off = scan while driving.</label>
-  <div id="fsBanner" style="display:none;padding:12px;border-radius:10px;font-weight:700;font-size:17px;margin-top:10px"></div>
-  <div style="background:#2a323d;border-radius:8px;height:22px;overflow:hidden;margin-top:8px"><div id="fsBar" style="height:100%;width:0;background:#3ecf8e;transition:width .3s"></div></div>
-  <div id="fsPct" style="font-size:20px;font-weight:700;margin-top:6px">0%</div>
-  <div class="row" style="margin-top:8px">
-    <button id="fsGo" disabled>Start / continue</button>
-    <button id="fsStop" style="display:none" class="stop">Pause</button>
-    <button id="fsSave">Save report</button>
-    <button id="fsReset">Reset progress</button>
-  </div>
-  <div id="fsProg" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
-  <pre id="fsOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:240px;overflow:auto"></pre>
-</div>
-<div class="card">
-  <div class="row">
-    <button id="btnStart" class="go" disabled>Start logging</button>
-    <button id="btnSave" disabled>Save CSV</button>
-    <button id="btnRecover">Recover last</button>
-  </div>
-  <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Auto-detected pedal dips: <b id="dips">0</b></p>
-  <div id="grid" class="grid"></div>
+<div class="card" id="devCard" style="display:none">
+  <b>Devices</b> <small>devices that failed the check are greyed out here.</small>
+  <div id="devList"></div>
 </div>
 
-<div class="card">
-  <canvas id="plot" width="700" height="300"></canvas>
-  <small>green = pedal D, blue = commanded throttle, orange = engine torque (last 30 s)</small>
-</div>
-
-<div class="card">
-  <small>Tap right when you feel a dip. It drops a marker row in the log.</small>
-</div>
-
-<div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-u · Android app support</small></p>
+<div class="card"><div id="log" class="noswipe"></div></div>
+<p style="text-align:center"><small id="ver">build 2026-11-14-a · three modes</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -478,9 +533,9 @@ async function connectNative(auto){
     const v=await verifyDongle();
     if(!v.ok) return await rejectDevice(v.reason);
     connected=true; renderDevices(); $('notice').style.display='none';
-    rememberDev(); autoPause=false;
-    try{ await initElm(); }catch(e){ if(!autoOn()) throw e; }
-    enableUI();
+    rememberDev(); autoPause=false; carUp=false;
+    let up=true; try{ await initElm(); }catch(e){ up=false; if(!autoOn()) throw e; }
+    carUp=up; enableUI();
     if(autoOn()) autoLoop();
   }catch(e){ connected=false; pickList=null; setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
 }
@@ -489,7 +544,9 @@ async function connectNative(auto){
 const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
 let autoBusy=false, autoPause=false, lastDev=null, lastOpenErr='';
 try{ lastDev=JSON.parse(localStorage.getItem('obd_last')||'null'); }catch(e){}
-const autoOn=()=>$('autoMode').checked && $('modeSel').value==='normal';
+const autoOn=()=>$('autoMode').checked;
+const MODE=()=>$('modeSel').value;   // normal = Monitor, scan = Sweep, explore = Identify
+let carUp=false, fsUserPaused=false;
 try{ const s=localStorage.getItem('obd_auto'); $('autoMode').checked = s===null ? NATIVE : s==='1'; }catch(e){ $('autoMode').checked=NATIVE; }
 $('autoMode').onchange=()=>{ try{ localStorage.setItem('obd_auto',$('autoMode').checked?'1':'0'); }catch(e){} if(autoOn()){ autoPause=false; autoLoop(); } };
 function rememberDev(){ if(device){ lastDev={id:device.id,name:device.name}; try{ localStorage.setItem('obd_last',JSON.stringify(lastDev)); }catch(e){} } }
@@ -514,19 +571,33 @@ async function autoLoop(){
   try{
     while(autoOn() && !autoPause){
       if(!connected){
-        if(!lastDev){ setStatus('Auto: tap Connect once to choose your dongle.'); break; }
+        carUp=false;
+        if(!lastDev){ setStatus('Tap Connect once to choose your dongle.'); break; }
         if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); await sleepMs(3000); continue; }
-        setStatus('Auto: looking for '+lastDev.name+'...');
-        if(!(await tryOpen(lastDev))){ setStatus('Auto: could not reach '+lastDev.name+' ('+(lastOpenErr||'no answer')+'). Retrying...'); await sleepMs(4000); continue; }
+        setStatus('Looking for '+lastDev.name+'...');
+        if(!(await tryOpen(lastDev))){ setStatus('Could not reach '+lastDev.name+' ('+(lastOpenErr||'no answer')+'). Retrying...'); await sleepMs(4000); continue; }
       }
-      setStatus('Auto: dongle connected, waiting for the car (ignition on)...');
-      let up=true; try{ await initElm(); }catch(e){ up=false; }
-      if(!connected) continue;
-      if(!up){ setStatus('Auto: dongle connected, waiting for the car (ignition on)...'); await sleepMs(4000); continue; }
-      enableUI();
-      await startLogging();                 // returns when logging stops: car off, link lost, or Stop tapped
-      await endSession(connected?'car stopped answering':'dongle disconnected');
-      if(!autoPause) await sleepMs(2000);
+      if(!carUp){
+        if(gT||scanning||fsActive||running){ await sleepMs(1000); continue; }
+        setStatus('Dongle connected, waiting for the car (ignition on)...');
+        busyInit=true; let up=true; try{ await initElm(); }catch(e){ up=false; } busyInit=false;
+        if(!connected) continue;
+        if(!up){ setStatus('Dongle connected, waiting for the car (ignition on)...'); await sleepMs(4000); continue; }
+        carUp=true; enableUI();
+      }
+      const m=MODE();
+      if(m==='normal' && !gT){
+        await startLogging();               // returns when logging stops: car off, link lost, mode change or Stop
+        await endSession(connected?'logging stopped':'dongle disconnected');
+        if(logEndWhy==='silent'||!connected) carUp=false;
+        if(!autoPause) await sleepMs(1500);
+      } else if(m==='scan' && !fsUserPaused && !scanning && !(fsLoad()&&fsLoad().done)){
+        const why=await fullScan();
+        if(why==='caroff'){ carUp=false; setStatus('Car is off. The sweep continues when it is back on.'); await sleepMs(4000); }
+        else await sleepMs(1500);
+      } else {
+        await sleepMs(1000);
+      }
     }
   }catch(e){ log('Auto error: '+e.message); }
   autoBusy=false;
@@ -541,7 +612,7 @@ if(NATIVE){
 
 function onDisc(){
   if(suppressDisc){ suppressDisc=false; return; }
-  connected=false; const was=running; running=false;
+  connected=false; carUp=false; const was=running; running=false;
   $('btnStart').disabled=true; $('probeGo').disabled=true; $('sweepGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
   log('Disconnected'); saveLocal(); renderDevices();
@@ -578,8 +649,10 @@ async function applyTarget(){
 
 // ---- read-only probe ----
 const NEG={'11':'service not supported','12':'sub-function not supported','13':'bad message length','22':'conditions not correct','31':'request out of range (identifier not supported)','33':'security access denied','7E':'not supported in this session','7F':'service not supported in this session','78':'response pending'};
+async function pauseSweep(){ if(fsBusy){ fsUserPaused=true; fsActive=false; for(let k=0;k<20&&fsBusy;k++) await sleepMs(250); } }
 async function probe(){
   if(running||!connected) return;
+  await pauseSweep();
   const raw=$('probeCmd').value.replace(/\s+/g,'').toUpperCase();
   const out=$('probeOut');
   if(!/^(01|09|22)([0-9A-F]{2})+$/.test(raw)){ out.textContent='Only read requests are allowed: start with 01, 09 or 22, hex bytes only (e.g. 22 01 01).'; return; }
@@ -628,9 +701,25 @@ function onBase(v, times){
   }
   return flags;
 }
+// Transmission block 22 01A0 on 7E1 (decoded on this car; gear values above 1 are still provisional)
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
+const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D'};
+const gearTxt=g=>g===0x0E?'R':String(g);
+let tcmLatest=null, logEndWhy='';
+function decodeTcm(d){
+  if(!d||d.length<23) return null;
+  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]),
+          tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
+}
+async function readTcm(){
+  await send('ATSH 7E1'); await send('ATCRA 7E9');
+  const u=parseUds(await send('2201A0',1500));
+  await applyTarget();
+  return u.kind==='ok' ? decodeTcm(u.data) : null;
+}
 async function startLogging(){
   if(!connected) return;
-  const explore=$('modeSel').value==='explore';
+  const explore=!!exOnly;
   const sel=explore?[]:selectedPids(); if(!explore&&!sel.length){ setStatus('Tick at least one channel.'); return; }
   if(rows.length===0) t0=performance.now(); else if(!t0) t0=performance.now();
   if($('useGps').checked && navigator.geolocation && geoId==null)
@@ -646,10 +735,13 @@ async function startLogging(){
   const poller=new Poller(send, window.__expect||'', log);
   running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
   setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
-  let rot=1, times=[], lastGood=performance.now();
+  let rot=1, times=[], lastGood=performance.now(), cyc=0; logEndWhy='';
+  const tcmOn=$('useTcm').checked && (window.__proto==='6'||window.__proto==='8') && $('ecuSel').value==='all';
+  if(tcmOn) for(const c of TCM_COLS) if(!extraCols.includes(c)) extraCols.push(c);
   try{
     while(running){
-      if(autoOn() && performance.now()-lastGood>15000){ log('No answer from the car for 15 s'); running=false; break; }
+      if(MODE()!=='normal'){ running=false; break; }
+      if(autoOn() && performance.now()-lastGood>15000){ log('No answer from the car for 15 s'); logEndWhy='silent'; running=false; break; }
       const picks=[0]; if(groups.length>1){ picks.push(rot); rot = rot>=groups.length-1 ? 1 : rot+1; }
       for(const gi of picks){
         if(!running) break;
@@ -657,6 +749,7 @@ async function startLogging(){
         const flags=onBase(v, times);
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
+      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); } }
     }
   }catch(e){ log('Loop error: '+e.message); }
   running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
@@ -680,9 +773,10 @@ function parseCandidates(text){
   }
   return {list,errors};
 }
-async function setTarget(tx){ await send('ATSH '+tx); await send('ATCRA '+(tx==='7E0'?'7E8':'7E9')); }
+async function setTarget(tx){ await send('ATSH '+tx); await send('ATCRA '+(parseInt(tx,16)+8).toString(16).toUpperCase().padStart(3,'0')); }
 async function sweep(){
   if(running||!connected) return;
+  await pauseSweep();
   if(window.__proto!=='6'&&window.__proto!=='8'){ $('sweepOut').textContent='Needs 11-bit CAN (protocol 6 or 8). This car reports '+window.__proto+'.'; return; }
   const {list,errors}=parseCandidates($('candList').value);
   const out=$('sweepOut'); $('sweepGo').disabled=true; $('sweepSave').disabled=true;
@@ -707,24 +801,25 @@ async function sweep(){
   log('Sweep: '+sweepLive.length+'/'+list.length+' answered');
   $('sweepGo').disabled=false; $('sweepSave').disabled=false;
 }
+let exBusy=false;
+function fsActiveBusy(){ return fsBusy; }
 async function runExplore(){
-  const tx=$('exTx').value;
-  exLive=exOnly||sweepLive.filter(c=>c.tx===tx);
-  if(!exLive.length){ setStatus('Run the sweep first (parked). No '+tx+' request has answered yet.'); try{wakeLock&&wakeLock.release();}catch(e){} return; }
-  const cols=exLive.map(c=>tx+'_'+c.raw);
+  exLive=exOnly||[];
+  if(!exLive.length){ setStatus('Nothing to record.'); try{wakeLock&&wakeLock.release();}catch(e){} return; }
+  const cols=exLive.map(c=>c.tx+'_'+c.raw);
   for(const c of cols) if(!extraCols.includes(c)) extraCols.push(c);
   exLatest=exLive.map(()=>'');
-  $('exGrid').innerHTML=exLive.map((c,k)=>'<div class="cell"><span>'+tx+' '+c.raw+'</span><b id="x'+k+'" style="font-size:11px;word-break:break-all">–</b></div>').join('');
-  const base = tx==='7E1' ? ['49','0C','0D','11','42'] : ['49','4A','4C','62','0C','0D'];
-  const groups=makeGroups(base);
-  let times=[];
+  $('exGrid').innerHTML=exLive.map((c,k)=>'<div class="cell"><span>'+c.tx+' '+c.raw+'</span><b id="x'+k+'" style="font-size:11px;word-break:break-all">–</b></div>').join('');
+  const groups=makeGroups(['49','4A','4C','62','0C','0D']);
+  let times=[], cur='';
+  const target=async tx=>{ if(cur!==tx){ await setTarget(tx); cur=tx; } };
+  exBusy=true;
   try{
-    await setTarget(tx);
-    const expect=' 1';
-    const poller=new Poller(send, expect, log);
-    running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
-    setStatus('Exploring '+tx+': '+exLive.length+' raw request(s) + base channels'); log('Explore '+tx+' '+exLive.map(c=>c.raw).join(','));
+    const poller=new Poller(send, ' 1', log);
+    running=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false;
+    log('Recording '+exLive.map(c=>c.tx+':'+c.raw).join(','));
     while(running){
+      await target('7E0');
       for(const g of groups){
         if(!running) break;
         const v=await poller.queryGroup(g);
@@ -732,6 +827,7 @@ async function runExplore(){
         if(Object.keys(v).length) addRow('B', v, flags);
       }
       for(let k=0;k<exLive.length&&running;k++){
+        await target(exLive[k].tx);
         const r=await send(exLive[k].raw,1500);   // no reply-count digit: it cuts multi-frame replies to the first frame
         const u=parseUds(r);
         const hex = u.kind==='ok' ? hexStr(u.data) : (u.kind==='neg' ? 'NRC'+u.nrc.toString(16).toUpperCase().padStart(2,'0') : '');
@@ -739,103 +835,214 @@ async function runExplore(){
         addRow('X'+k, {}, {}, {[cols[k]]:hex});
       }
     }
-  }catch(e){ log('Explore error: '+e.message); }
-  running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
+  }catch(e){ log('Recording error: '+e.message); }
+  running=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   try{wakeLock&&wakeLock.release();}catch(e){}
   try{ await applyTarget(); }catch(e){}
-  if(connected) setStatus('Stopped. '+rows.length+' rows logged.');
+  exBusy=false;
   saveLocal();
 }
 
-// ---- Guided decoding tests (Exploratory, engine computer 7E0) ----
-const TESTS={
-  selector:{name:'Selector test', steps:()=>[
-    {id:'P',  t:'Stay parked, foot on the brake. Lever in P.', hold:5},
-    {id:'R',  t:'Foot on brake: shift to R and hold.', hold:5},
-    {id:'N',  t:'Foot on brake: shift to N and hold.', hold:5},
-    {id:'D',  t:'Foot on brake: shift to D and hold.', hold:5},
-    {id:'P2', t:'Back to P and hold.', hold:5}]},
-  drive:{name:'Drive test', steps:()=>[
-    {id:'prep',    t:'Stopped, lever in D. Tap NEXT, then drive off.', hold:2},
-    {id:'drive',   t:'Drive normally: a few stops and starts, and up to 40 to 50 mph if you can. Any order.', hold:120},
-    {id:'cruise1', t:'Now hold a steady 40 to 50 mph, pedal still.', hold:20},
-    {id:'press1',  t:'Press the pedal a little more for 3 seconds.', hold:3},
-    {id:'cruise2', t:'Ease back to steady speed and hold.', hold:10},
-    {id:'press2',  t:'Press a little more again for 3 seconds.', hold:3},
-    {id:'cruise3', t:'Steady again and hold.', hold:10},
-    {id:'coast',   t:'Lift off the pedal completely and coast.', hold:5}]}
+// ---- Mode 3: identification tests ----
+// Data blocks found on this car by the sweeps (read-only service 22).
+const ENG_WIDE=['E001','E002','E003','E004','E005','E006','E009','E00A','E010','E011','E012','E013','E014','E016','E017','E018','E019','E01B','E01C','E01D','E01E','E01F','E020','E021','E023','E024','E027','E02C','E02D','E080','E091','E092','E095','E0F1','E0F2'];
+const SETS = window.__guideReq ? {tcm:window.__guideReq.map(r=>({tx:'7E1',raw:r})), engCore:[], engWide:[]} : {
+  tcm:     ['2201A0','2201A1','2201A2','2201A3'].map(r=>({tx:'7E1',raw:r})),
+  engCore: ['22E001','22E002'].map(r=>({tx:'7E0',raw:r})),
+  engWide: ENG_WIDE.map(d=>({tx:'7E0',raw:'22'+d}))
 };
-let gT=null;   // active guided test
-let exOnly=null;   // when set, Exploratory logging records exactly these requests
-// Transmission-computer live blocks found by the range scan on this car (read-only)
-const GUIDE_TX='7E1', GUIDE_REQ=window.__guideReq||['2201A0','2201A1','2201A2','2201A3'];
+const onOff=(what,secs)=>[
+  {id:'off1', t:what+' OFF. Hold.', hold:secs},
+  {id:'on1',  t:what+' ON. Hold.', hold:secs},
+  {id:'off2', t:what+' OFF again. Hold.', hold:secs},
+  {id:'on2',  t:what+' ON again. Hold.', hold:secs}];
+// Parked steps: you tap NEXT (it turns green after "hold" seconds).
+// Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
+const TESTS={
+  selector:{name:'Gear lever P-R-N-D', where:'parked', mins:1, sets:['tcm','engCore'], steps:()=>[
+    {id:'P',  t:'Foot on the brake. Lever in P.', hold:5},
+    {id:'R',  t:'Shift to R and hold.', hold:5},
+    {id:'N',  t:'Shift to N and hold.', hold:5},
+    {id:'D',  t:'Shift to D and hold.', hold:5},
+    {id:'P2', t:'Back to P and hold.', hold:5}]},
+  manual:{name:'Manual gate + and − (standstill)', where:'parked', mins:1, sets:['tcm','engCore'], steps:()=>[
+    {id:'D',     t:'Foot on the brake. Lever in D.', hold:5},
+    {id:'gate',  t:'Move the lever into the manual gate. Hold.', hold:5},
+    {id:'plus',  t:'Tap + once. Hold.', hold:5},
+    {id:'minus', t:'Tap − once. Hold.', hold:5},
+    {id:'D2',    t:'Back to D. Hold.', hold:5},
+    {id:'P',     t:'Back to P.', hold:3}]},
+  drivemode:{name:'Drive mode button', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
+    {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:8},
+    {id:'press1',t:'Press DRIVE MODE once. Hold.', hold:8},
+    {id:'press2',t:'Press DRIVE MODE again. Hold.', hold:8},
+    {id:'press3',t:'Press DRIVE MODE again. Hold.', hold:8},
+    {id:'press4',t:'Press again until it is back where it started. Hold.', hold:8}]},
+  brake:{name:'Brake pedal', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
+    {id:'off1', t:'In P. Foot OFF the brake. Hold.', hold:8},
+    {id:'on1',  t:'Press the brake firmly. Hold.', hold:8},
+    {id:'off2', t:'Foot OFF the brake. Hold.', hold:8},
+    {id:'on2',  t:'Press the brake lightly. Hold.', hold:8}]},
+  throttle:{name:'Accelerator in Park', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
+    {id:'idle1', t:'In P. Foot off the pedal. Hold.', hold:8},
+    {id:'rev1',  t:'Press gently to about 1500 rpm. Hold it there.', hold:8},
+    {id:'idle2', t:'Release. Hold.', hold:8},
+    {id:'rev2',  t:'Press to about 2500 rpm. Hold it there.', hold:8},
+    {id:'idle3', t:'Release. Hold.', hold:8}]},
+  ac:{name:'A/C button', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>onOff('A/C',10)},
+  steering:{name:'Steering wheel', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
+    {id:'center1', t:'In P. Hands off the wheel. Hold.', hold:8},
+    {id:'left',    t:'Turn the wheel left and keep light pressure on it.', hold:8},
+    {id:'center2', t:'Back to centre, hands off. Hold.', hold:8},
+    {id:'right',   t:'Turn the wheel right and keep light pressure on it.', hold:8}]},
+  loads:{name:'Lights and rear defrost', where:'parked', mins:1, sets:['tcm','engWide'], steps:()=>[
+    {id:'alloff',  t:'Headlights off, rear defrost off. Hold.', hold:10},
+    {id:'lights',  t:'Headlights ON. Hold.', hold:10},
+    {id:'defrost', t:'Rear defrost ON as well. Hold.', hold:10},
+    {id:'alloff2', t:'Both OFF again. Hold.', hold:10}]},
+  custom:{name:'Custom on/off test', where:'parked', mins:1, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',10)},
+  free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
+    {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
+  drive:{name:'Normal drive (gears)', where:'driving', mins:8, sets:['tcm','engCore'],
+    plan:['Start stopped, lever in D.',
+          'Drive as you normally would for 5 to 10 minutes. Include a few full stops and, if the road allows, 40 to 50 mph.',
+          'You do not touch or look at the phone while moving.',
+          'When you have finished and are stopped, tap anywhere on the screen to end and save.'],
+    steps:()=>[{id:'drive', t:'Recording. Drive normally. TAP when stopped at the end.', say:'Recording. Drive normally. When you have finished and stopped, tap the screen anywhere.', tap:true, hold:60}]},
+  manualdrive:{name:'Manual shifting drive', where:'driving', mins:8, sets:['tcm','engCore'],
+    plan:['Start stopped. Move the lever into the manual gate.',
+          'Drive off and shift up one gear at a time with +, holding each gear for a few seconds, as high as the road allows.',
+          'Then shift back down one gear at a time with −.',
+          'You do not touch the phone while moving. The gear is worked out afterwards from RPM and speed.',
+          'When you are stopped at the end, tap anywhere on the screen to end and save.'],
+    steps:()=>[{id:'manual', t:'Recording. Shift up, then down. TAP when stopped at the end.', say:'Recording. Shift up through the gears, then back down. When you have stopped, tap the screen anywhere.', tap:true, hold:60}]},
+  lockup:{name:'Lock-up at cruise', where:'driving', mins:3, sets:['tcm','engCore'],
+    plan:['Pick a road where you can hold 40 to 50 mph for about a minute. Lever in D.',
+          'Once you are cruising steadily, tap anywhere on the screen. That is the only tap.',
+          'The phone then speaks each cue: hold steady (20 s), press a little more (4 s), back to steady (12 s), press a little more (4 s), back to steady (12 s), lift off and coast (6 s).',
+          'It ends and saves by itself, and says so.'],
+    steps:()=>[
+      {id:'approach', t:'Get to a steady 40 to 50 mph, then TAP.', say:'Get to a steady forty to fifty miles per hour. Tap the screen anywhere once you are cruising.', tap:true, hold:3},
+      {id:'cruise1',  t:'Hold steady', say:'Hold your speed steady.', secs:20},
+      {id:'press1',   t:'Press a little more', say:'Press the pedal a little more.', secs:4},
+      {id:'cruise2',  t:'Back to steady', say:'Ease back to steady speed.', secs:12},
+      {id:'press2',   t:'Press a little more', say:'Press a little more again.', secs:4},
+      {id:'cruise3',  t:'Back to steady', say:'Back to steady speed.', secs:12},
+      {id:'coast',    t:'Lift off and coast', say:'Lift off the pedal completely and coast.', secs:6}]}
+};
+let gT=null;       // active test
+let exOnly=null;   // when set, logging records exactly these requests
+let busyInit=false;
+// ---- voice and beep ----
+let actx=null;
+function beep(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=880; g.gain.value=0.15; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+0.15); }catch(e){} }
+function speak(t){
+  beep();
+  if(!$('useVoice').checked) return;
+  try{
+    if(NATIVE && AndroidBT.speak){ AndroidBT.speak(t); return; }
+    if(window.speechSynthesis){ speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }
+  }catch(e){}
+}
+// ---- tiles ----
+let testsDone={}; try{ testsDone=JSON.parse(localStorage.getItem('obd_tests_done')||'{}'); }catch(e){}
+function renderTiles(){
+  $('tiles').innerHTML=Object.keys(TESTS).map(k=>{ const t=TESTS[k], d=testsDone[k];
+    return '<button class="tile'+(d?' done':'')+'" data-test="'+k+'"><span class="where '+t.where+'">'+(t.where==='driving'?'DRIVING':'PARKED')+'</span><b>'+esc(t.name)+'</b>'+
+      (t.custom?'<input id="customName" class="noswipe" placeholder="what? e.g. heated seat" style="width:100%;padding:6px;border-radius:6px;border:0;background:#1b2027;color:var(--fg)">':'')+
+      '<small>'+(t.mins?'about '+t.mins+' min':'as long as you like')+(d?' · last run '+new Date(d).toLocaleDateString()+' ✓':'')+'</small></button>'; }).join('');
+  document.querySelectorAll('.tile').forEach(b=>b.onclick=ev=>{
+    if(ev.target.id==='customName') return;
+    const k=b.dataset.test, t=TESTS[k];
+    if(t.where==='driving'){ $('planTitle').textContent=t.name; $('planList').innerHTML=t.plan.map(p=>'<li>'+esc(p)+'</li>').join(''); $('planCard').style.display=''; $('planGo').onclick=()=>{ $('planCard').style.display='none'; gStart(k); }; $('planCard').scrollIntoView&&$('planCard').scrollIntoView(); }
+    else gStart(k, t.custom ? ($('customName').value.trim()||'It') : '');
+  });
+}
+$('planCancel').onclick=()=>{ $('planCard').style.display='none'; };
+// ---- running a test ----
 function gShow(){
   const s=gT.steps[gT.i];
-  curStep=gT.key+':'+s.id; gT.since=performance.now();
+  curStep=gT.key+(gT.label?'['+gT.label.replace(/[^\w -]/g,'')+']':'')+':'+s.id; gT.since=performance.now();
   if(running) addRow('S',{}, {});
-  $('gTitle').textContent=gT.name+' · step '+(gT.i+1)+' of '+gT.steps.length;
-  $('gText').textContent=s.t;
-  $('gAlt').style.display=s.alt?'':'none'; if(s.alt) $('gAlt').textContent='Gear '+s.gear+' is the highest I can reach';
+  const title=gT.name+' · step '+(gT.i+1)+' of '+gT.steps.length;
+  $('gTitle').textContent=title; $('gText').textContent=s.t;
+  $('dTitle').textContent=title; $('dText').textContent=s.t;
+  speak(s.say||s.t);
   gTick();
 }
-function gTick(){
+function gNextStep(){
   if(!gT) return;
-  const s=gT.steps[gT.i], el=Math.floor((performance.now()-gT.since)/1000), ok=el>=s.hold;
-  $('gNext').className=ok?'ready':'';
-  $('gNext').textContent=(gT.i===gT.steps.length-1?'FINISH':'NEXT')+(ok?'':'  (hold '+(s.hold-el)+' s)');
-  if(!running && gT.started){ gEnd('logging stopped'); }
+  if(gT.i>=gT.steps.length-1) return gEnd('finished');
+  gT.i++; gShow();
 }
-setInterval(gTick,500);
-async function gStart(key){
+function gTick(){
+  if(!gT||!gT.started) return;
+  const s=gT.steps[gT.i], el=(performance.now()-gT.since)/1000, last=gT.i===gT.steps.length-1;
+  if(!running){ gEnd('recording stopped'); return; }
+  if(s.secs!=null){
+    const left=Math.max(0,Math.ceil(s.secs-el));
+    $('dSub').textContent=left+' s'; $('driveOv').className='';
+    $('gNext').className=''; $('gNext').textContent='wait '+left+' s'; $('gNext').disabled=true;
+    if(el>=s.secs) gNextStep();
+    return;
+  }
+  const ok=el>=(s.hold||0), left=Math.ceil((s.hold||0)-el);
+  $('gNext').disabled=false; $('gNext').className=ok?'ready':'';
+  $('gNext').textContent=(last?'FINISH':'NEXT')+(ok?'':'  (hold '+left+' s)');
+  $('dSub').textContent=s.tap?(ok?'tap anywhere':''):''; $('driveOv').className=(s.tap&&ok)?'tap':'';
+}
+setInterval(gTick,250);
+async function gStart(key, label){
   if(gT) return;
-  if(!connected){ setStatus('Connect to the dongle first.'); return; }
-  if(running){ running=false; await sleepMs(1500); }
-  if($('modeSel').value!=='explore'){ $('modeSel').value='explore'; $('modeSel').onchange(); }
-  await endSession('starting a guided test');
-  $('exTx').value=GUIDE_TX;
-  setStatus('Checking the transmission data blocks (stay stopped)...');
-  const okList=[];
-  try{ await setTarget(GUIDE_TX); for(const raw of GUIDE_REQ){ if(parseUds(await send(raw,2000)).kind==='ok') okList.push({tx:GUIDE_TX,raw:raw}); } }catch(e){}
-  if(!okList.length){ setStatus('The transmission computer did not answer its data blocks. Is the ignition on?'); try{ await applyTarget(); }catch(e){} return; }
-  exOnly=okList;
   const def=TESTS[key];
-  gT={key:key, name:def.name, steps:def.steps(), i:0, started:false};
-  $('guide').style.display=''; gShow();
+  if(!connected){ setStatus('Connect to the dongle first.'); return; }
+  if(window.__proto!=='6'&&window.__proto!=='8'){ setStatus('Waiting for the car to answer (ignition on), then tap the test again.'); return; }
+  gT={key:key, name:def.name, label:label||'', where:def.where, steps:def.steps(label), i:0, started:false};
+  fsActive=false; scanning=false; running=false;
+  for(let k=0;k<40 && (running||busyInit||fsCur&&fsActiveBusy());k++) await sleepMs(250);
+  await endSession('starting a test');
+  setStatus('Checking the data blocks (stay stopped)...');
+  const want=[].concat(...def.sets.map(s=>SETS[s])), okList=[];
+  try{ let cur=''; for(const c of want){ if(cur!==c.tx){ await setTarget(c.tx); cur=c.tx; } if(parseUds(await send(c.raw,2000)).kind==='ok') okList.push(c); } }catch(e){}
+  if(!okList.length){ gT=null; setStatus('The car did not answer its data blocks. Is the ignition on?'); try{ await applyTarget(); }catch(e){} return; }
+  exOnly=okList;
   startLogging();
   for(let k=0;k<20 && !running;k++) await sleepMs(250);
-  if(!running){ exOnly=null; gT=null; curStep=''; $('guide').style.display='none'; setStatus('Could not start logging for the test.'); return; }
-  gT.started=true; addRow('S',{}, {});
+  if(!running){ exOnly=null; gT=null; curStep=''; setStatus('Could not start recording for the test.'); return; }
+  if(def.where==='driving') $('driveOv').style.display='flex'; else $('guide').style.display='';
+  setStatus(def.name+': recording '+okList.length+' data blocks.');
+  gT.started=true; gShow();
   window.scrollTo(0,0);
 }
 async function gEnd(why){
   const t=gT; if(!t) return;
-  gT=null; curStep=''; exOnly=null; $('guide').style.display='none';
-  running=false; await sleepMs(1500);
+  gT=null; curStep=''; $('guide').style.display='none'; $('driveOv').style.display='none';
+  running=false; for(let k=0;k<12 && exBusy;k++) await sleepMs(250);
+  exOnly=null;
   log(t.name+' ended ('+why+'), '+rows.length+' rows');
-  if(rows.length){ if(await saveFile(csv(),'obd_'+t.key,'csv','text/csv')){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} } }
-  setStatus(t.name+' saved. Send me the file, or pick the next test.');
+  let saved=false;
+  if(rows.length){ saved=await saveFile(csv(),'obd_test_'+t.key+(t.label?'_'+t.label.replace(/[^\w-]+/g,'-'):''),'csv','text/csv'); if(saved){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; extraCols=[]; try{ localStorage.removeItem('obdlog_last'); }catch(e){} } }
+  if(saved && why==='finished'){ testsDone[t.key]=Date.now(); try{ localStorage.setItem('obd_tests_done',JSON.stringify(testsDone)); }catch(e){} renderTiles(); }
+  speak(saved?'Test complete. File saved.':'Test ended.');
+  setStatus(t.name+(saved?' saved to Downloads. Send the file to Claude, or pick the next test.':' ended.'));
 }
-$('gNext').onclick=()=>{
-  if(!gT) return;
-  if(gT.steps[gT.i].id==='up8') return $('gAlt').onclick();
-  if(gT.i>=gT.steps.length-1) return gEnd('finished');
-  gT.i++; gShow();
-};
-$('gAlt').onclick=()=>{            // top gear reached: replace the rest with the way back down
-  if(!gT) return;
-  const top=gT.steps[gT.i].gear, down=[];
-  for(let g=top-1;g>=1;g--) down.push({id:'down'+g, gear:g, t:'Shift DOWN to gear '+g+' and hold. '+(g>1?'Tap NEXT the moment you shift down to '+(g-1)+'.':'Then tap FINISH.'), hold:5});
-  gT.steps=gT.steps.slice(0,gT.i+1).concat(down);
-  gT.i++; gShow();
+$('gNext').onclick=()=>{ if(!gT||!gT.started) return; const s=gT.steps[gT.i]; if(s.secs!=null) return; gNextStep(); };
+$('driveOv').onclick=ev=>{
+  if(ev.target.id==='dEnd'||!gT||!gT.started) return;
+  const s=gT.steps[gT.i]; if(!s.tap) return;
+  if((performance.now()-gT.since)/1000 < (s.hold||0)) return;      // ignore accidental early taps
+  gNextStep();
 };
 $('gAbort').onclick=()=>gEnd('ended by you');
-document.querySelectorAll('.gt').forEach(b=>b.onclick=()=>gStart(b.dataset.test));
+$('dEnd').onclick=()=>gEnd('ended by you');
+renderTiles();
 
 // ---- Range scan: read-only service 22 over a span of data IDs ----
 let scanning=false, scanReport=[];
 const QUICK_PAGES=['E0','F1','F0','00','01','02','10','11','20','21','22','B0','C0','D0'];
 async function scanRanges(ranges){
   if(running||scanning||!connected) return;
+  await pauseSweep();
   if(window.__proto!=='6'&&window.__proto!=='8'){ $('scanOut').textContent='Needs 11-bit CAN (protocol 6 or 8).'; return; }
   scanning=true; $('scanQuick').disabled=true; $('scanGo').disabled=true; $('scanSave').disabled=true; $('scanStop').style.display=''; $('btnStart').disabled=true; $('sweepGo').disabled=true;
   const out=$('scanOut'); out.textContent='';
@@ -892,7 +1099,7 @@ const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
 const FS_DEFAULT=['7E1 2300 AFFF','7E1 B100 BFFF','7E1 C100 CFFF','7E1 D100 EFFF','7E1 F200 FFFF'].join('\n');
 // Identification plan (all discovered modules, F180-F1FF): paste into the plan box to use.
 const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
-let fsActive=false;
+let fsActive=false, fsBusy=false;
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
 function fsSave(st){
@@ -942,15 +1149,16 @@ function fsUI(st, notify){
   const pct=total?d/total*100:0;
   $('fsBar').style.width=pct.toFixed(1)+'%';
   $('fsPct').textContent=pct.toFixed(1)+'%  ('+d.toLocaleString()+' of '+total.toLocaleString()+' IDs) · found '+st.found.length;
+  $('fsLast').textContent=st.saved?('Last progress saved '+new Date(st.saved).toLocaleString()+' · '+fsPos(st)):'';
   b.style.display='';
-  if(st.done){ b.style.background='#14764a'; b.style.color='#fff'; b.textContent='SCAN COMPLETE. You can switch to Normal mode now.'; }
-  else if(fsActive){ b.style.background='#1f4f8a'; b.style.color='#fff'; b.textContent='SCANNING. Screen can be off. Not finished yet.'; }
-  else { b.style.background='#9a5b00'; b.style.color='#fff'; b.textContent='NOT FINISHED. Stopped at '+pct.toFixed(1)+'%. Tap Start / continue.'; }
+  if(st.done){ b.style.background='#14764a'; b.style.color='#fff'; b.textContent='SWEEP COMPLETE. Save the file and send it to Claude.'; }
+  else if(fsActive){ b.style.background='#1f4f8a'; b.style.color='#fff'; b.textContent='SWEEPING. Screen can be off. Not finished yet.'; }
+  else { b.style.background='#9a5b00'; b.style.color='#fff'; b.textContent='NOT FINISHED. Stopped at '+pct.toFixed(1)+'%. '+(fsUserPaused?'Paused by you: tap Start / continue.':'Continues when the car is on.'); }
   if(notify && window.ScanBT){ try{ ScanBT.scanStatus(st.done?'Scan complete. Switch to Normal mode.':(fsActive?'Scanning '+pct.toFixed(1)+'% · found '+st.found.length:'Stopped at '+pct.toFixed(1)+'%'), Math.round(pct), !!st.done); }catch(e){} }
 }
 function fsRefresh(){
   const sc=$('modeSel').value==='scan';
-  $('fsGo').disabled=!sc || fsActive || !connected || running || scanning;
+  $('fsGo').disabled=!sc || fsActive || !connected || running || scanning || !!gT;
   $('fsStop').style.display=fsActive?'':'none';
   $('fsReset').disabled=fsActive;
   $('fsSave').disabled=!fsLoad();
@@ -964,13 +1172,14 @@ async function fullScan(){
     if(!plan.length){ $('fsProg').textContent='Plan is empty or wrong. Use lines like: 7E0 F180 F1FF'; return; }
     st={plan:plan,i:0,did:null,miss:0,found:[],done:false};
   }
-  fsActive=true; fsCur=st; fsRefresh();
+  fsActive=true; fsBusy=true; fsCur=st; fsRefresh();
   const out=$('fsOut');
   const say=l=>{ out.textContent+=l+'\n'; out.scrollTop=out.scrollHeight; };
   say('-- '+new Date().toLocaleTimeString()+' '+(st.did==null&&st.i===0?'start':'continue')+' --');
-  let lastCheck=-1000, reason='';
+  let lastCheck=-1000, reason='', result='stopped';
   try{
     while(fsActive && connected && st.i<st.plan.length){
+      if(MODE()!=='scan'){ break; }
       const r=st.plan[st.i];
       if(st.did==null){ st.did=r.from; st.miss=0; say('# '+r.tx+' '+fsH4(r.from)+'-'+fsH4(r.to)); lastCheck=-1000; }
       if(st.did-lastCheck>=16){
@@ -994,7 +1203,14 @@ async function fullScan(){
       else if(u.kind==='other'){ st.miss=0; say(r.tx+' '+raw+'  odd reply: '+hexStr(u.all)); }
       else if(u.kind==='neg'){ st.miss=0; }
       else { st.miss++; }
-      if(st.miss>=25){ say(r.tx+' no reply 25 times in a row, skipping rest of range'); st.did=r.to; st.miss=0; }
+      if(st.miss>=25){
+        // silent module, or is the whole car off? Ask the engine computer something it always answers.
+        await setTarget('7E0');
+        const alive=/4100/.test(String(await send('0100',2500)).replace(/\s/g,''));
+        if(!alive){ st.did=Math.max(r.from, st.did-24); st.miss=0; fsSave(st); say('car stopped answering: pausing here'); result='caroff'; break; }
+        await setTarget(r.tx);
+        say(r.tx+' no reply 25 times in a row, skipping rest of range'); st.did=r.to; st.miss=0;
+      }
       const cur=st.did; st.did++;
       if(st.did>r.to){ st.i++; st.did=null; st.miss=0; if(st.i>=st.plan.length){ st.done=true; } }
       else if(cur%16===0){ fsSave(st); }
@@ -1004,34 +1220,70 @@ async function fullScan(){
   }catch(e){ say('Error: '+e.message); }
   fsActive=false;
   try{ await applyTarget(); }catch(e){}
+  fsBusy=false;
   const ok=fsSave(st);
   if(st.done) say('Full scan finished. Found '+st.found.length+'. Tap Save report.');
   if(ok) $('fsProg').textContent=(st.done?'Finished':'Stopped')+' · '+fsPos(st)+' · found '+st.found.length+' · saved '+new Date(st.saved).toLocaleTimeString();
   fsUI(st, true);
   fsRefresh();
+  return st.done?'done':result;
 }
 fsUI(fsLoad());
 $('fsPlan').value=(fsLoad()&&fsLoad().plan)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
 try{ $('fsParkedOnly').checked=localStorage.getItem('obd_fs_parkedonly')==='1'; }catch(e){}
 $('fsParkedOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_parkedonly',$('fsParkedOnly').checked?'1':'0'); }catch(e){} };
-$('fsGo').onclick=fullScan;
-$('fsStop').onclick=()=>{ fsActive=false; };
-$('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsUI(null); fsRefresh(); };
-$('fsSave').onclick=()=>{ const st=fsLoad(); if(!st) return; const lines=['Fast OBD Logger full scan '+new Date().toISOString(),'plan:'].concat(st.plan.map(p=>'  '+p.tx+' '+fsH4(p.from)+'-'+fsH4(p.to)),['',st.found.length+' data IDs answered:'],st.found.map(f=>f.tx+' '+f.raw+' '+f.hex)); saveFile(lines.join('\n'),'obd_fullscan','txt','text/plain'); };
+$('fsGo').onclick=()=>{ fsUserPaused=false; if(!(NATIVE&&autoOn()&&autoBusy)) fullScan(); };
+$('fsStop').onclick=()=>{ fsUserPaused=true; fsActive=false; };
+$('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} if(!fsParsePlan($('fsPlan').value).length) $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsUI(null); fsRefresh(); };
+$('fsSave').onclick=()=>{ const st=fsLoad(); if(!st) return;
+  const hide=f=>/^22F190$/.test(f.raw)?'(VIN hidden)':f.hex;
+  const lines=['Fast OBD Logger sweep '+new Date().toISOString(), st.done?'status: complete':'status: NOT complete, '+fsPos(st), 'plan (module first-ID last-ID):']
+    .concat(st.plan.map((p,j)=>'  '+p.tx+' '+fsH4(p.from)+'-'+fsH4(p.to)+(j<st.i?'  done':(j===st.i&&!st.done?'  in progress at '+fsH4(st.did==null?p.from:st.did):(st.done?'  done':'  not started')))),
+            ['',st.found.length+' data IDs answered:'], st.found.map(f=>f.tx+' '+f.raw+' '+hide(f)));
+  saveFile(lines.join('\n'),'obd_sweep','txt','text/plain'); };
+const FS_ALL_PLAN=['7E1 0000 FFFF','7E0 0000 FFFF'].join('\n');
+$('fsPlanAll').onclick=()=>{ $('fsPlan').value=FS_ALL_PLAN; $('fsProg').textContent='Plan changed. Tap Reset progress to use it (this discards the current progress).'; };
+$('fsPlanIdent').onclick=()=>{ $('fsPlan').value=FS_IDENT_PLAN; $('fsProg').textContent='Plan changed. Tap Reset progress to use it (this discards the current progress).'; };
 setInterval(fsRefresh,1000);
 
 $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
-$('modeSel').onchange=()=>{ const m=$('modeSel').value, ex=m==='explore', sc=m==='scan'; $('normalCard').style.display=(ex||sc)?'none':''; $('exploreCard').style.display=ex?'':'none'; $('scanModeCard').style.display=sc?'':'none'; $('ecuSel').disabled=ex||sc; $('btnStart').style.display=sc?'none':''; fsRefresh(); };
+// ---- three modes, tabs and swipe ----
+const MODES=['monitor','sweep','identify'], MODE_SEL={monitor:'normal',sweep:'scan',identify:'explore'}, PAGES={monitor:'pgMonitor',sweep:'pgSweep',identify:'pgIdentify'};
+let uiMode='';
+function setMode(m){
+  if(!PAGES[m]) m='monitor';
+  if(gT){ setStatus('Finish or end the test first.'); return; }
+  if(m===uiMode) return;
+  uiMode=m; $('modeSel').value=MODE_SEL[m];
+  for(const k of MODES) $(PAGES[k]).style.display=(k===m)?'':'none';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.mode===m));
+  $('markBar').style.display=(m==='monitor')?'':'none';
+  $('planCard').style.display='none';
+  try{ localStorage.setItem('obd_mode',m); }catch(e){}
+  if(m!=='monitor' && running && !exOnly){ logEndWhy='mode'; running=false; }
+  if(m!=='sweep'){ fsActive=false; scanning=false; }
+  autoPause=false;
+  fsRefresh(); window.scrollTo(0,0);
+  if(NATIVE && autoOn() && !autoBusy && (connected||lastDev)) autoLoop();
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>setMode(t.dataset.mode));
+let sw=null;
+document.addEventListener('touchstart',e=>{ const t=e.target; if(gT||(t.closest&&t.closest('input,textarea,select,canvas,.noswipe,#driveOv'))){ sw=null; return; } const p=e.touches[0]; sw={x:p.clientX,y:p.clientY,t:Date.now()}; },{passive:true});
+document.addEventListener('touchend',e=>{ if(!sw) return; const p=e.changedTouches[0], dx=p.clientX-sw.x, dy=p.clientY-sw.y, dt=Date.now()-sw.t; sw=null;
+  if(Math.abs(dx)>70 && Math.abs(dx)>2*Math.abs(dy) && dt<700){ const i=MODES.indexOf(uiMode)+(dx<0?1:-1); if(i>=0&&i<MODES.length) setMode(MODES[i]); } },{passive:true});
+{ let m0='monitor'; try{ m0=localStorage.getItem('obd_mode')||'monitor'; }catch(e){} setMode(m0); }
 
 $('btnStart').onclick=()=>{ if(running){ running=false; if(autoOn()) autoPause=true; } else { autoPause=false; if(autoOn()&&NATIVE){ if(!autoBusy) autoLoop(); } else startLogging(); } };
 $('btnConnect').onclick=()=>connect();
 $('btnAll').onclick=()=>connect(false,true);
-$('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
+let marks=0;
+$('mark').onclick=()=>{ addRow('M',{}, {mark:1}); marks++; $('marks').textContent=marks; const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
 
 // ---- UI refresh ----
 setInterval(()=>{
   for(const p of ORDER){ const v=latest[p]; if(v!==undefined) document.querySelector('#c'+p+' b').textContent = Math.abs(v)>=100?v.toFixed(0):v.toFixed(1); }
+  if(tcmLatest){ $('tLever').textContent=tcmLatest.tcm_lever; $('tGear').textContent=tcmLatest.tcm_gear; $('tTurb').textContent=tcmLatest.tcm_turbine_rpm.toFixed(0); $('tSlip').textContent=tcmLatest.tcm_slip_rpm.toFixed(0); }
   exLatest.forEach((h,k)=>{ const el=document.getElementById('x'+k); if(el) el.textContent=h?(h.length>40?h.slice(0,40)+'…':h):'–'; });
   draw();
 },250);

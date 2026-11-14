@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.speech.tts.TextToSpeech
 import android.view.WindowManager
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
@@ -36,6 +37,8 @@ class MainActivity : Activity() {
     }
     private lateinit var web: WebView
     private var selfClose = false
+    private var tts: TextToSpeech? = null
+    @Volatile private var ttsReady = false
     private val writeLock = Any()
     private val spp: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -44,6 +47,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         try { socket?.close() } catch (e: IOException) { }   // drop any link left over from an earlier screen
         socket = null
+        tts = TextToSpeech(this, TextToSpeech.OnInitListener { status -> ttsReady = (status == TextToSpeech.SUCCESS) })
         web = WebView(this)
         setContentView(web)
         web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
@@ -103,6 +107,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         selfClose = true
+        try { tts?.shutdown() } catch (e: Exception) { }
         stopService(Intent(this, KeepAliveService::class.java))
         try { socket?.close() } catch (e: IOException) { }
         super.onDestroy()
@@ -121,6 +126,13 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
+        @JavascriptInterface
+        fun speak(text: String) {
+            if (ttsReady) {
+                try { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "obd") } catch (e: Exception) { }
             }
         }
 
