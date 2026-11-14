@@ -122,6 +122,21 @@
     <button id="sweepSave" disabled>Save sweep report</button>
     <select id="exTx"><option value="7E1">Log ECU 2 (7E1)</option><option value="7E0">Log ECU 1 (7E0)</option></select>
   </div>
+  <div style="margin-top:10px"><b>Range scan</b> <small>parked, engine idling. Asks for many data IDs (read-only service 22) and lists the ones that answer.</small></div>
+  <div class="row" style="margin-top:6px">
+    <button id="scanQuick" disabled>Quick scan, both ECUs (about 5 to 10 min)</button>
+    <button id="scanStop" style="display:none" class="stop">Stop scan</button>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <select id="scanEcu"><option value="7E0">ECU 1 (7E0)</option><option value="7E1">ECU 2 (7E1)</option></select>
+    <input id="scanFrom" value="E000" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+    <span>to</span>
+    <input id="scanTo" value="E0FF" maxlength="4" size="5" style="padding:10px;border-radius:8px;border:0;background:#232a33;color:var(--fg)">
+    <button id="scanGo" disabled>Scan this range</button>
+    <button id="scanSave" disabled>Save scan report</button>
+  </div>
+  <div id="scanProg" style="color:var(--mut);font-size:13px;margin-top:4px"></div>
+  <pre id="scanOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:240px;overflow:auto"></pre>
   <pre id="sweepOut" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut)"></pre>
   <div id="exGrid" class="grid"></div>
   <details>
@@ -156,7 +171,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-n · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-o · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -797,6 +812,57 @@ $('gAlt').onclick=()=>{            // top gear reached: replace the rest with th
 };
 $('gAbort').onclick=()=>gEnd('ended by you');
 document.querySelectorAll('.gt').forEach(b=>b.onclick=()=>gStart(b.dataset.test));
+
+// ---- Range scan: read-only service 22 over a span of data IDs ----
+let scanning=false, scanReport=[];
+const QUICK_PAGES=['E0','F1','F0','00','01','02','10','11','20','21','22','B0','C0','D0'];
+async function scanRanges(ranges){
+  if(running||scanning||!connected) return;
+  if(window.__proto!=='6'&&window.__proto!=='8'){ $('scanOut').textContent='Needs 11-bit CAN (protocol 6 or 8).'; return; }
+  scanning=true; $('scanQuick').disabled=true; $('scanGo').disabled=true; $('scanSave').disabled=true; $('scanStop').style.display=''; $('btnStart').disabled=true; $('sweepGo').disabled=true;
+  const out=$('scanOut'); out.textContent='';
+  scanReport=['Fast OBD Logger range scan '+new Date().toISOString(),'protocol '+window.__proto,''];
+  const say=l=>{ out.textContent+=l+'\n'; out.scrollTop=out.scrollHeight; scanReport.push(l); };
+  const total=ranges.reduce((a,r)=>a+(r.to-r.from+1),0); let done=0, found=0, other=0, silent=0, t1=performance.now();
+  try{
+    for(const r of ranges){
+      if(!scanning) break;
+      await setTarget(r.tx);
+      const h4=n=>n.toString(16).toUpperCase().padStart(4,'0');
+      say('# '+r.tx+' '+h4(r.from)+'-'+h4(r.to));
+      let miss=0;
+      for(let did=r.from; did<=r.to && scanning && connected; did++){
+        const raw='22'+h4(did);
+        let u=parseUds(await send(raw,700));
+        if(u.kind==='neg' && u.nrc===0x78) u=parseUds(await send(raw,3000));     // "please wait": ask once more, slower
+        const lbl=r.tx+' 22 '+raw.slice(2,4)+' '+raw.slice(4);
+        if(u.kind==='ok'){ found++; miss=0; say(lbl+'  OK ('+u.data.length+' data bytes)  '+hexStr(u.all));
+          if(!sweepLive.some(c=>c.tx===r.tx&&c.raw===raw)) sweepLive.push({tx:r.tx,raw:raw});
+          if(!$('candList').value.toUpperCase().replace(/ /g,'').includes((r.tx+raw))) $('candList').value=$('candList').value.replace(/\s*$/,'')+'\n'+r.tx+' 22 '+raw.slice(2,4)+' '+raw.slice(4)+'\n'; }
+        else if(u.kind==='neg'){ miss=0; if(u.nrc!==0x31 && u.nrc!==0x11 && u.nrc!==0x12){ other++; const n=u.nrc.toString(16).toUpperCase().padStart(2,'0'); say(lbl+'  exists but refused: '+(NRC_TXT[n]||'code '+n)); } }
+        else if(u.kind==='other'){ miss=0; other++; say(lbl+'  odd reply: '+hexStr(u.all)); }
+        else { silent++; if(++miss>=25){ say(lbl+'  no reply 25 times in a row, skipping the rest of this range'); done+=r.to-did; break; } }
+        done++;
+        if(done%8===0){ const el=(performance.now()-t1)/1000, eta=el/done*(total-done); $('scanProg').textContent='Scanning '+lbl+' · '+done+' of '+total+' · found '+found+' · about '+Math.ceil(eta/60)+' min left'; }
+      }
+    }
+  }catch(e){ say('Error: '+e.message); }
+  try{ await applyTarget(); }catch(e){}
+  say(''); say(found+' data IDs answered with data, '+other+' exist but refused, '+silent+' gave no reply. Checked '+done+' of '+total+'.'+(scanning?'':' (stopped early)'));
+  $('scanProg').textContent='Scan finished: '+found+' found. Tap Save scan report and send me the file.';
+  scanning=false; $('scanStop').style.display='none';
+  if(connected){ $('scanQuick').disabled=false; $('scanGo').disabled=false; $('btnStart').disabled=false; $('sweepGo').disabled=false; }
+  $('scanSave').disabled=false;
+}
+$('scanQuick').onclick=()=>{ const r=[]; for(const tx of ['7E0','7E1']) for(const p of QUICK_PAGES){ const b=parseInt(p,16)<<8; r.push({tx:tx,from:b,to:b+255}); } scanRanges(r); };
+$('scanGo').onclick=()=>{
+  const a=parseInt($('scanFrom').value,16), b=parseInt($('scanTo').value,16);
+  if(!/^[0-9a-f]{1,4}$/i.test($('scanFrom').value.trim())||!/^[0-9a-f]{1,4}$/i.test($('scanTo').value.trim())||b<a){ $('scanProg').textContent='Enter the range as hex, for example E000 to E0FF.'; return; }
+  scanRanges([{tx:$('scanEcu').value,from:a,to:b}]);
+};
+$('scanStop').onclick=()=>{ scanning=false; };
+$('scanSave').onclick=()=>saveFile(scanReport.join('\n'),'obd_scan','txt','text/plain');
+setInterval(()=>{ if(!scanning){ const ok=connected&&!running; $('scanQuick').disabled=!ok; $('scanGo').disabled=!ok; } },1000);
 
 $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
