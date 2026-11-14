@@ -161,7 +161,7 @@ class MainActivity : Activity() {
                             c = when (mode) {
                                 0 -> dev.createRfcommSocketToServiceRecord(spp)
                                 1 -> dev.createInsecureRfcommSocketToServiceRecord(spp)
-                                else -> dev.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType).invoke(dev, 1) as BluetoothSocket
+                                else -> dev.javaClass.getMethod("createRfcommSocket", Int::class.java).invoke(dev, 1) as BluetoothSocket
                             }
                             c.connect()
                             s = c
