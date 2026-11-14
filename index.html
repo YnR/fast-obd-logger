@@ -883,7 +883,11 @@ setInterval(()=>{ if(!scanning){ const ok=connected&&!running; $('scanQuick').di
 const FS_KEY='obd_fullscan';
 const FS_MODULES=['71A','737','770','771','777','780','7A0','7A1','7A5','7B7','7C3','7C4','7D0','7D1','7D2','7D4','7D5','7D6','7E0','7E1','7E5'];
 const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
-const FS_DEFAULT=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
+// Default plan: continue the 7E1 sweep. 04E0-0FFF and 1200-1FFF were finished on the Mac bridge;
+// 2300-AFFF was interrupted before any hit, so it restarts from its first ID.
+const FS_DEFAULT=['7E1 2300 AFFF','7E1 B100 BFFF','7E1 C100 CFFF','7E1 D100 EFFF','7E1 F200 FFFF'].join('\n');
+// Identification plan (all discovered modules, F180-F1FF): paste into the plan box to use.
+const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
 let fsActive=false;
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
