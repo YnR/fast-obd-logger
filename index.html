@@ -51,6 +51,7 @@
       <option value="1">ECU 2 only (7E1)</option>
     </select>
     <select id="modeSel" title="Normal logging or exploratory"><option value="normal">Mode: Normal</option><option value="explore">Mode: Exploratory</option></select>
+    <label class="chk" style="display:block;margin-top:8px"><input type="checkbox" id="autoMode"> Auto: reconnect to the last dongle, start logging when the car is on, save the file when it turns off</label>
   </div>
   <p id="status">Not connected.</p>
   <p id="notice" style="display:none;color:var(--warn);font-weight:600"></p>
@@ -135,7 +136,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-i · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-k · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -169,25 +170,25 @@ function parseResp(text){
   if(!text) return out;
   const lines = text.split(/[\r\n]+/).map(s=>s.replace(/\s+/g,'').toUpperCase()).filter(Boolean)
                     .filter(l=>/^[0-9A-F:]+$/.test(l));
-  let bytes;
+  const frames = [];
   if(lines.some(l=>/^[0-9A-F]:/.test(l))){            // multi-frame (ISO-TP) reply
     let hex=''; for(const l of lines){ const m=l.match(/^[0-9A-F]:(.*)$/); if(m) hex+=m[1]; }
-    bytes = hexToBytes(hex);
-  } else {                                           // single-frame; first ECU that answered
-    const l = lines.find(x=>x.startsWith('41'));
-    if(!l) return out;
-    bytes = hexToBytes(l);
+    frames.push(hexToBytes(hex));
+  } else {                                           // single frames: every ECU that answered (each may hold different PIDs)
+    for(const l of lines) if(l.startsWith('41')) frames.push(hexToBytes(l));
   }
-  if(bytes[0]!==0x41) return out;
-  let i=1;
-  while(i<bytes.length){
-    const pid = bytes[i].toString(16).toUpperCase().padStart(2,'0');
-    const def = PIDS[pid];
-    if(!def) break;
-    const a = bytes.slice(i+1, i+1+def.len);
-    if(a.length<def.len) break;
-    out[pid] = def.f(a);
-    i += 1+def.len;
+  for(const bytes of frames){
+    if(bytes[0]!==0x41) continue;
+    let i=1;
+    while(i<bytes.length){
+      const pid = bytes[i].toString(16).toUpperCase().padStart(2,'0');
+      const def = PIDS[pid];
+      if(!def) break;
+      const a = bytes.slice(i+1, i+1+def.len);
+      if(a.length<def.len) break;
+      if(out[pid]===undefined) out[pid] = def.f(a);
+      i += 1+def.len;
+    }
   }
   return out;
 }
@@ -426,17 +427,68 @@ async function connectNative(auto){
     const v=await verifyDongle();
     if(!v.ok) return await rejectDevice(v.reason);
     connected=true; renderDevices(); $('notice').style.display='none';
-    await initElm();
-    $('btnStart').disabled=false; $('probeGo').disabled=false; $('sweepGo').disabled=false;
-    $('btnConnect').textContent='Reconnect';
+    rememberDev(); autoPause=false;
+    try{ await initElm(); }catch(e){ if(!autoOn()) throw e; }
+    enableUI();
+    if(autoOn()) autoLoop();
   }catch(e){ connected=false; pickList=null; setStatus('Connect failed: '+e.message); log('ERR '+e.message); }
 }
+
+// ---- Auto mode: reconnect, start/stop logging with the car, save a file whenever a session ends ----
+const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
+let autoBusy=false, autoPause=false, lastDev=null;
+try{ lastDev=JSON.parse(localStorage.getItem('obd_last')||'null'); }catch(e){}
+const autoOn=()=>$('autoMode').checked && $('modeSel').value!=='explore';
+try{ const s=localStorage.getItem('obd_auto'); $('autoMode').checked = s===null ? NATIVE : s==='1'; }catch(e){ $('autoMode').checked=NATIVE; }
+$('autoMode').onchange=()=>{ try{ localStorage.setItem('obd_auto',$('autoMode').checked?'1':'0'); }catch(e){} if(autoOn()){ autoPause=false; autoLoop(); } };
+function rememberDev(){ if(device){ lastDev={id:device.id,name:device.name}; try{ localStorage.setItem('obd_last',JSON.stringify(lastDev)); }catch(e){} } }
+function enableUI(){ $('btnStart').disabled=false; $('probeGo').disabled=false; $('sweepGo').disabled=false; $('btnConnect').textContent='Reconnect'; }
+async function tryOpen(dev){
+  device={id:dev.id,name:dev.name};
+  const r=await new Promise(res=>{ nativeConnRes=res; AndroidBT.connect(dev.id); });
+  if(!r.ok){ device=null; return false; }
+  const v=await verifyDongle();
+  if(!v.ok){ try{ AndroidBT.close(); }catch(e){} device=null; return false; }
+  connected=true; renderDevices(); return true;
+}
+async function endSession(why){
+  if(rows.length>=10){
+    log('Session ended ('+why+'): saving '+rows.length+' rows');
+    if(await saveCsv(csv())){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} }
+  } else if(rows.length){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; }
+}
+async function autoLoop(){
+  if(autoBusy || !NATIVE) return;
+  autoBusy=true;
+  try{
+    while(autoOn() && !autoPause){
+      if(!connected){
+        if(!lastDev){ setStatus('Auto: tap Connect once to choose your dongle.'); break; }
+        if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); await sleepMs(3000); continue; }
+        setStatus('Auto: looking for '+lastDev.name+'...');
+        if(!(await tryOpen(lastDev))){ await sleepMs(4000); continue; }
+      }
+      setStatus('Auto: dongle connected, waiting for the car (ignition on)...');
+      let up=true; try{ await initElm(); }catch(e){ up=false; }
+      if(!connected) continue;
+      if(!up){ setStatus('Auto: dongle connected, waiting for the car (ignition on)...'); await sleepMs(4000); continue; }
+      enableUI();
+      await startLogging();                 // returns when logging stops: car off, link lost, or Stop tapped
+      await endSession(connected?'car stopped answering':'dongle disconnected');
+      if(!autoPause) await sleepMs(2000);
+    }
+  }catch(e){ log('Auto error: '+e.message); }
+  autoBusy=false;
+}
+if(NATIVE) setTimeout(()=>{ if(autoOn() && lastDev) autoLoop(); },1500);
+
 function onDisc(){
   if(suppressDisc){ suppressDisc=false; return; }
   connected=false; const was=running; running=false;
   $('btnStart').disabled=true; $('probeGo').disabled=true; $('sweepGo').disabled=true; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
   setStatus('Dongle disconnected.'+(was?' Log kept; tap Reconnect, then Start to continue.':''));
   log('Disconnected'); saveLocal(); renderDevices();
+  if(NATIVE && autoOn() && !autoPause) setTimeout(autoLoop,1500);
 }
 
 async function initElm(){
@@ -535,15 +587,16 @@ async function startLogging(){
   const poller=new Poller(send, window.__expect||'', log);
   running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
   setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
-  let rot=1, times=[];
+  let rot=1, times=[], lastGood=performance.now();
   try{
     while(running){
+      if(autoOn() && performance.now()-lastGood>15000){ log('No answer from the car for 15 s'); running=false; break; }
       const picks=[0]; if(groups.length>1){ picks.push(rot); rot = rot>=groups.length-1 ? 1 : rot+1; }
       for(const gi of picks){
         if(!running) break;
         const v=await poller.queryGroup(groups[gi]);
         const flags=onBase(v, times);
-        if(Object.keys(v).length) addRow(gi, v, flags);
+        if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
     }
   }catch(e){ log('Loop error: '+e.message); }
@@ -638,7 +691,7 @@ $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
 $('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCard').style.display=ex?'none':''; $('exploreCard').style.display=ex?'':'none'; $('ecuSel').disabled=ex; };
 
-$('btnStart').onclick=()=>{ if(running){ running=false; } else startLogging(); };
+$('btnStart').onclick=()=>{ if(running){ running=false; if(autoOn()) autoPause=true; } else { autoPause=false; if(autoOn()&&NATIVE){ if(!autoBusy) autoLoop(); } else startLogging(); } };
 $('btnConnect').onclick=()=>connect();
 $('btnAll').onclick=()=>connect(false,true);
 $('mark').onclick=()=>{ addRow('M',{}, {mark:1}); const b=$('mark'); b.textContent='MARKED ✓'; setTimeout(()=>b.textContent='I FELT IT (tap)',500); };
@@ -666,10 +719,10 @@ setInterval(()=>{ if(running) saveLocal(); },20000);
 async function saveFile(text, prefix, ext, mime){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
   const name=`${prefix}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
-  if(NATIVE){ try{ const where=AndroidBT.save(name,text,mime); log('Saved: '+where); setStatus('Saved to '+where); }catch(e){ log('Save failed: '+e.message); } return; }
+  if(NATIVE){ try{ const where=AndroidBT.save(name,text,mime); log('Saved: '+where); setStatus('Saved to '+where); return true; }catch(e){ log('Save failed: '+e.message); return false; } }
   const file=new File([text],name,{type:mime});
-  try{ if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return; } }catch(e){ if(e.name==='AbortError') return; }
-  const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  try{ if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return true; } }catch(e){ if(e.name==='AbortError') return false; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=name; document.body.appendChild(a); a.click(); a.remove(); return true;
 }
 const saveCsv = text => saveFile(text,'obd','csv','text/csv');
 $('btnSave').onclick=()=>saveCsv(csv());
