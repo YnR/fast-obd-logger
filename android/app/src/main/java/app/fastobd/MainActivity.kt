@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.ContentValues
@@ -152,27 +153,7 @@ class MainActivity : Activity() {
                     val a = adapter() ?: throw IOException("Bluetooth is off")
                     try { a.cancelDiscovery() } catch (e: SecurityException) { }
                     val dev = a.getRemoteDevice(addr)
-                    // Try the standard way first, then two well-known fallbacks for adapters that refuse it.
-                    var s: BluetoothSocket? = null
-                    var err = "connection failed"
-                    for (mode in 0..2) {
-                        var c: BluetoothSocket? = null
-                        try {
-                            c = when (mode) {
-                                0 -> dev.createRfcommSocketToServiceRecord(spp)
-                                1 -> dev.createInsecureRfcommSocketToServiceRecord(spp)
-                                else -> dev.javaClass.getMethod("createRfcommSocket", Int::class.java).invoke(dev, 1) as BluetoothSocket
-                            }
-                            c.connect()
-                            s = c
-                            break
-                        } catch (e: Exception) {
-                            if (mode == 0) err = e.message ?: err
-                            try { c?.close() } catch (x: Exception) { }
-                            Thread.sleep(400)
-                        }
-                    }
-                    if (s == null) throw IOException(err)
+                    val s: BluetoothSocket = openSocket(dev)
                     selfClose = false
                     socket = s
                     js("window.__btConnected(true,'')")
@@ -212,6 +193,33 @@ class MainActivity : Activity() {
             contentResolver.openOutputStream(uri).use { it!!.write(text.toByteArray(Charsets.UTF_8)) }
             return "Downloads/$name"
         }
+    }
+
+    // Try the standard way first, then two well-known fallbacks for adapters that refuse it.
+    @SuppressLint("MissingPermission")
+    private fun openSocket(dev: BluetoothDevice): BluetoothSocket {
+        var firstError = "connection failed"
+        for (mode in 0..2) {
+            val c: BluetoothSocket = try {
+                if (mode == 0) dev.createRfcommSocketToServiceRecord(spp)
+                else if (mode == 1) dev.createInsecureRfcommSocketToServiceRecord(spp)
+                else {
+                    val m = dev.javaClass.getMethod("createRfcommSocket", Integer.TYPE)
+                    m.invoke(dev, Integer.valueOf(1)) as BluetoothSocket
+                }
+            } catch (e: Exception) {
+                continue
+            }
+            try {
+                c.connect()
+                return c
+            } catch (e: Exception) {
+                if (mode == 0) firstError = e.message ?: firstError
+                try { c.close() } catch (x: Exception) { }
+                try { Thread.sleep(400) } catch (x: InterruptedException) { }
+            }
+        }
+        throw IOException(firstError)
     }
 
     private fun readLoop(s: BluetoothSocket) {
