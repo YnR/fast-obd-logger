@@ -154,6 +154,7 @@
   <b>Full scan</b> <small>Read-only service 22 over the data IDs below, for each module listed. Runs only while parked in P or N with speed 0, and pauses by itself otherwise. Progress is saved on this phone, so you can stop and continue on later drives.</small>
   <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
   <small>One line per module: address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
+  <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Scan only when parked (P or N, speed 0). Off = scan while driving.</label>
   <div class="row" style="margin-top:8px">
     <button id="fsGo" disabled>Start / continue</button>
     <button id="fsStop" style="display:none" class="stop">Pause</button>
@@ -916,6 +917,7 @@ function fsPos(st){
 }
 // Parked = speed 0 (engine ECU, PID 0D) and lever in P or N (transmission block 01A0, byte 21 = 0B or 09).
 async function fsParked(){
+  if(!$('fsParkedOnly').checked) return '';
   await setTarget('7E0');
   const sp=String(await send('010D',1500)).replace(/\s/g,'').toUpperCase().match(/410D([0-9A-F]{2})/);
   if(!sp) return 'no speed reply';
@@ -988,6 +990,8 @@ async function fullScan(){
   fsRefresh();
 }
 $('fsPlan').value=(fsLoad()&&fsLoad().plan)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
+try{ $('fsParkedOnly').checked=localStorage.getItem('obd_fs_parkedonly')==='1'; }catch(e){}
+$('fsParkedOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_parkedonly',$('fsParkedOnly').checked?'1':'0'); }catch(e){} };
 $('fsGo').onclick=fullScan;
 $('fsStop').onclick=()=>{ fsActive=false; };
 $('fsReset').onclick=()=>{ if(fsActive) return; try{ localStorage.removeItem(FS_KEY); }catch(e){} $('fsPlan').value=FS_DEFAULT; $('fsOut').textContent=''; $('fsProg').textContent='Progress reset. Start / continue begins from the plan.'; fsRefresh(); };
