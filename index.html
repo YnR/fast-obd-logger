@@ -22,6 +22,11 @@
   .cell span{color:var(--mut);font-size:11px}
   #status{color:var(--mut)}
   #markBar{position:sticky;top:0;z-index:50;padding:6px 0;background:var(--bg,#0f1318)}
+  #guide{background:var(--card);border:2px solid var(--acc);border-radius:10px;padding:10px;margin-top:6px}
+  #gTitle{color:var(--mut);font-size:13px}
+  #gText{font-size:20px;font-weight:700;margin:6px 0 10px}
+  #gNext{width:100%;font-size:22px;padding:20px;background:var(--mut);color:#fff;font-weight:700;margin-bottom:6px}
+  #gNext.ready{background:var(--ok);color:#06281a}
   #mark{width:100%;font-size:20px;padding:22px;background:var(--warn);color:#241600;font-weight:700}
   canvas{width:100%;height:150px;background:#0d1014;border-radius:8px}
   #log{font:11px/1.35 ui-monospace,monospace;color:var(--mut);max-height:130px;overflow:auto;white-space:pre-wrap}
@@ -38,7 +43,13 @@
 </style>
 </head>
 <body>
-<div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button></div>
+<div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button>
+<div id="guide" style="display:none">
+  <div id="gTitle"></div>
+  <div id="gText"></div>
+  <button id="gNext">NEXT</button>
+  <div class="row"><button id="gAlt" style="display:none"></button><button id="gAbort">End test and save</button></div>
+</div></div>
 <h1>Fast OBD Logger <small>ELM327 / OBDLink</small></h1>
 
 <div class="card">
@@ -76,6 +87,14 @@
 </div>
 
 <div class="card" id="exploreCard" style="display:none">
+  <b>Guided decoding tests</b> <small>each one logs engine-computer data, walks you through the steps, and saves its own file</small>
+  <div class="row" style="margin:8px 0">
+    <button class="gt" data-test="selector">1 · Selector P-R-N-D (parked)</button>
+    <button class="gt" data-test="gears">2 · Gears (manual mode)</button>
+    <button class="gt" data-test="lockup">3 · Lock-up (cruise)</button>
+  </div>
+  <p><small>Start every test stopped, engine running. Tap the big NEXT button at the top at each step; it turns green once the step has been held long enough.</small></p>
+  <hr style="border:0;border-top:1px solid #2a323c">
   <b>Exploratory mode</b> <small>read-only requests to look for gear / lock-up data</small>
   <p><small>1) Parked, ignition on: tap <b>Sweep</b> to test every request below once. 2) Choose which ECU to log, then <b>Start logging</b> to record the raw replies that answered, plus pedal, RPM and speed, while you shift P-R-N-D and drive. 3) Save the CSV and the sweep report.</small></p>
   <textarea id="candList" rows="11" spellcheck="false" style="width:100%;font:12px ui-monospace,monospace;background:#232a33;color:var(--fg);border:0;border-radius:8px;padding:8px">
@@ -137,7 +156,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-m · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-n · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -552,12 +571,14 @@ $('probeGo').onclick=probe;
 
 // ---- logging loop ----
 const HEADER=['t_s','epoch_ms','group',...ORDER.map(p=>PIDS[p].name),'auto_dip','mark','gps_lat','gps_lon','gps_mph','phone_ax','phone_ay','phone_az'];
+let curStep='';
 let extraCols=[];   // exploratory raw-reply columns (only ever grows, so older rows stay aligned)
 function addRow(grp, vals, flags, extra){
   const now=performance.now();
   const r=[((now-t0)/1000).toFixed(3), Date.now(), grp];
   for(const p of ORDER) r.push(vals&&vals[p]!==undefined ? +vals[p].toFixed(3) : '');
   r.push(flags.dip||'', flags.mark||'', lastGeo.lat??'', lastGeo.lon??'', lastGeo.mph??'', lastAcc.x??'', lastAcc.y??'', lastAcc.z??'');
+  if(curStep){ if(!extraCols.includes('test_step')) extraCols.push('test_step'); extra=Object.assign({},extra,{test_step:curStep}); }
   for(const c of extraCols) r.push(extra&&extra[c]!==undefined ? extra[c] : '');
   rows.push(r); $('rows').textContent=rows.length;
 }
@@ -694,6 +715,89 @@ async function runExplore(){
   if(connected) setStatus('Stopped. '+rows.length+' rows logged.');
   saveLocal();
 }
+
+// ---- Guided decoding tests (Exploratory, engine computer 7E0) ----
+const TESTS={
+  selector:{name:'Selector test', steps:()=>[
+    {id:'P',  t:'Stay parked, foot on the brake. Lever in P.', hold:5},
+    {id:'R',  t:'Foot on brake: shift to R and hold.', hold:5},
+    {id:'N',  t:'Foot on brake: shift to N and hold.', hold:5},
+    {id:'D',  t:'Foot on brake: shift to D and hold.', hold:5},
+    {id:'P2', t:'Back to P and hold.', hold:5}]},
+  gears:{name:'Gear test', steps:()=>{
+    const s=[{id:'prep', t:'Stopped: put the lever in manual mode, gear 1. Tap NEXT, then drive off.', hold:2}];
+    for(let g=1;g<=8;g++) s.push({id:'up'+g, gear:g, t:'Hold gear '+g+'. Tap NEXT the moment you shift UP to '+(g+1)+'.', hold:5, alt:g>1});
+    s[s.length-1].t='Hold gear 8. Tap NEXT the moment you shift DOWN to 7.';
+    return s; }},
+  lockup:{name:'Lock-up test', steps:()=>[
+    {id:'accel',   t:'In D: get to a steady 40 to 50 mph, then tap NEXT.', hold:5},
+    {id:'cruise1', t:'Hold speed steady, pedal still.', hold:20},
+    {id:'press1',  t:'Press the pedal a little more for 3 seconds.', hold:3},
+    {id:'cruise2', t:'Ease back to steady speed and hold.', hold:10},
+    {id:'press2',  t:'Press a little more again for 3 seconds.', hold:3},
+    {id:'cruise3', t:'Steady again and hold.', hold:10},
+    {id:'coast',   t:'Lift off the pedal completely and coast.', hold:5}]}
+};
+let gT=null;   // active guided test
+function gShow(){
+  const s=gT.steps[gT.i];
+  curStep=gT.key+':'+s.id; gT.since=performance.now();
+  if(running) addRow('S',{}, {});
+  $('gTitle').textContent=gT.name+' · step '+(gT.i+1)+' of '+gT.steps.length;
+  $('gText').textContent=s.t;
+  $('gAlt').style.display=s.alt?'':'none'; if(s.alt) $('gAlt').textContent='Gear '+s.gear+' is the highest I can reach';
+  gTick();
+}
+function gTick(){
+  if(!gT) return;
+  const s=gT.steps[gT.i], el=Math.floor((performance.now()-gT.since)/1000), ok=el>=s.hold;
+  $('gNext').className=ok?'ready':'';
+  $('gNext').textContent=(gT.i===gT.steps.length-1?'FINISH':'NEXT')+(ok?'':'  (hold '+(s.hold-el)+' s)');
+  if(!running && gT.started){ gEnd('logging stopped'); }
+}
+setInterval(gTick,500);
+async function gStart(key){
+  if(gT) return;
+  if(!connected){ setStatus('Connect to the dongle first.'); return; }
+  if(running){ running=false; await sleepMs(1500); }
+  if($('modeSel').value!=='explore'){ $('modeSel').value='explore'; $('modeSel').onchange(); }
+  await endSession('starting a guided test');
+  $('exTx').value='7E0';
+  if(!sweepLive.some(c=>c.tx==='7E0')){ setStatus('Checking which requests answer (stay stopped)...'); await sweep(); }
+  if(!sweepLive.some(c=>c.tx==='7E0')){ setStatus('The engine computer did not answer the raw requests. Is the ignition on?'); return; }
+  const def=TESTS[key];
+  gT={key:key, name:def.name, steps:def.steps(), i:0, started:false};
+  $('guide').style.display=''; gShow();
+  startLogging();
+  for(let k=0;k<20 && !running;k++) await sleepMs(250);
+  if(!running){ gT=null; curStep=''; $('guide').style.display='none'; setStatus('Could not start logging for the test.'); return; }
+  gT.started=true; addRow('S',{}, {});
+  window.scrollTo(0,0);
+}
+async function gEnd(why){
+  const t=gT; if(!t) return;
+  gT=null; curStep=''; $('guide').style.display='none';
+  running=false; await sleepMs(1500);
+  log(t.name+' ended ('+why+'), '+rows.length+' rows');
+  if(rows.length){ if(await saveFile(csv(),'obd_'+t.key,'csv','text/csv')){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} } }
+  setStatus(t.name+' saved. Send me the file, or pick the next test.');
+}
+$('gNext').onclick=()=>{
+  if(!gT) return;
+  if(gT.steps[gT.i].id==='up8') return $('gAlt').onclick();
+  if(gT.i>=gT.steps.length-1) return gEnd('finished');
+  gT.i++; gShow();
+};
+$('gAlt').onclick=()=>{            // top gear reached: replace the rest with the way back down
+  if(!gT) return;
+  const top=gT.steps[gT.i].gear, down=[];
+  for(let g=top-1;g>=1;g--) down.push({id:'down'+g, gear:g, t:'Shift DOWN to gear '+g+' and hold. '+(g>1?'Tap NEXT the moment you shift down to '+(g-1)+'.':'Then tap FINISH.'), hold:5});
+  gT.steps=gT.steps.slice(0,gT.i+1).concat(down);
+  gT.i++; gShow();
+};
+$('gAbort').onclick=()=>gEnd('ended by you');
+document.querySelectorAll('.gt').forEach(b=>b.onclick=()=>gStart(b.dataset.test));
+
 $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
 $('modeSel').onchange=()=>{ const ex=$('modeSel').value==='explore'; $('normalCard').style.display=ex?'none':''; $('exploreCard').style.display=ex?'':'none'; $('ecuSel').disabled=ex; };
