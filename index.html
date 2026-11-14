@@ -137,7 +137,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-l · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-m · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -680,7 +680,7 @@ async function runExplore(){
         if(Object.keys(v).length) addRow('B', v, flags);
       }
       for(let k=0;k<exLive.length&&running;k++){
-        const r=await send(exLive[k].raw+expect,1500);
+        const r=await send(exLive[k].raw,1500);   // no reply-count digit: it cuts multi-frame replies to the first frame
         const u=parseUds(r);
         const hex = u.kind==='ok' ? hexStr(u.data) : (u.kind==='neg' ? 'NRC'+u.nrc.toString(16).toUpperCase().padStart(2,'0') : '');
         exLatest[k]=hex;
