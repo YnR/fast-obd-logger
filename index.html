@@ -87,7 +87,7 @@
 </div>
 
 <div class="card" id="exploreCard" style="display:none">
-  <b>Guided decoding tests</b> <small>each one logs engine-computer data, walks you through the steps, and saves its own file</small>
+  <b>Guided decoding tests</b> <small>each one logs the transmission computer's live data, walks you through the steps, and saves its own file</small>
   <div class="row" style="margin:8px 0">
     <button class="gt" data-test="selector">1 · Selector P-R-N-D (parked)</button>
     <button class="gt" data-test="gears">2 · Gears (manual mode)</button>
@@ -171,7 +171,7 @@
 </div>
 
 <div class="card"><div id="log"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-13-o · Android app support</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-13-p · Android app support</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -693,7 +693,7 @@ async function sweep(){
 }
 async function runExplore(){
   const tx=$('exTx').value;
-  exLive=sweepLive.filter(c=>c.tx===tx);
+  exLive=exOnly||sweepLive.filter(c=>c.tx===tx);
   if(!exLive.length){ setStatus('Run the sweep first (parked). No '+tx+' request has answered yet.'); try{wakeLock&&wakeLock.release();}catch(e){} return; }
   const cols=exLive.map(c=>tx+'_'+c.raw);
   for(const c of cols) if(!extraCols.includes(c)) extraCols.push(c);
@@ -754,6 +754,9 @@ const TESTS={
     {id:'coast',   t:'Lift off the pedal completely and coast.', hold:5}]}
 };
 let gT=null;   // active guided test
+let exOnly=null;   // when set, Exploratory logging records exactly these requests
+// Transmission-computer live blocks found by the range scan on this car (read-only)
+const GUIDE_TX='7E1', GUIDE_REQ=window.__guideReq||['2201A0','2201A1','2201A2','2201A3'];
 function gShow(){
   const s=gT.steps[gT.i];
   curStep=gT.key+':'+s.id; gT.since=performance.now();
@@ -777,21 +780,24 @@ async function gStart(key){
   if(running){ running=false; await sleepMs(1500); }
   if($('modeSel').value!=='explore'){ $('modeSel').value='explore'; $('modeSel').onchange(); }
   await endSession('starting a guided test');
-  $('exTx').value='7E0';
-  if(!sweepLive.some(c=>c.tx==='7E0')){ setStatus('Checking which requests answer (stay stopped)...'); await sweep(); }
-  if(!sweepLive.some(c=>c.tx==='7E0')){ setStatus('The engine computer did not answer the raw requests. Is the ignition on?'); return; }
+  $('exTx').value=GUIDE_TX;
+  setStatus('Checking the transmission data blocks (stay stopped)...');
+  const okList=[];
+  try{ await setTarget(GUIDE_TX); for(const raw of GUIDE_REQ){ if(parseUds(await send(raw,2000)).kind==='ok') okList.push({tx:GUIDE_TX,raw:raw}); } }catch(e){}
+  if(!okList.length){ setStatus('The transmission computer did not answer its data blocks. Is the ignition on?'); try{ await applyTarget(); }catch(e){} return; }
+  exOnly=okList;
   const def=TESTS[key];
   gT={key:key, name:def.name, steps:def.steps(), i:0, started:false};
   $('guide').style.display=''; gShow();
   startLogging();
   for(let k=0;k<20 && !running;k++) await sleepMs(250);
-  if(!running){ gT=null; curStep=''; $('guide').style.display='none'; setStatus('Could not start logging for the test.'); return; }
+  if(!running){ exOnly=null; gT=null; curStep=''; $('guide').style.display='none'; setStatus('Could not start logging for the test.'); return; }
   gT.started=true; addRow('S',{}, {});
   window.scrollTo(0,0);
 }
 async function gEnd(why){
   const t=gT; if(!t) return;
-  gT=null; curStep=''; $('guide').style.display='none';
+  gT=null; curStep=''; exOnly=null; $('guide').style.display='none';
   running=false; await sleepMs(1500);
   log(t.name+' ended ('+why+'), '+rows.length+' rows');
   if(rows.length){ if(await saveFile(csv(),'obd_'+t.key,'csv','text/csv')){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} } }
