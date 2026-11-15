@@ -146,6 +146,7 @@
       <summary>Plan and options</summary>
       <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
       <small>One line per range: module address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
+      <label style="display:block;margin-top:8px"><input type="checkbox" id="fsEngineOnly" checked> Sweep only while the engine is running (protects the 12 V battery)</label>
       <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Sweep only when parked (P or N, speed 0). Off = sweep while driving too.</label>
       <div class="row" style="margin-top:8px"><button id="fsPlanOthers">Plan: other computers (ABS, radar, body...)</button><button id="fsPlanAll">Plan: everything on engine and transmission</button><button id="fsPlanIdent">Plan: identify all modules</button><button id="fsReset">Reset progress</button></div>
     </details>
@@ -244,7 +245,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-i · other computers</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-j · sweep only with engine running</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -544,7 +545,7 @@ async function connectNative(auto){
 
 // ---- Auto mode: reconnect, start/stop logging with the car, save a file whenever a session ends ----
 const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
-let autoBusy=false, autoPause=false, lastDev=null, lastOpenErr='';
+let autoBusy=false, autoPause=false, lastDev=null, lastOpenErr='', lastCarSeen=Date.now();
 try{ lastDev=JSON.parse(localStorage.getItem('obd_last')||'null'); }catch(e){}
 const autoOn=()=>$('autoMode').checked;
 const MODE=()=>$('modeSel').value;   // normal = Monitor, scan = Sweep, explore = Identify
@@ -584,18 +585,23 @@ async function autoLoop(){
         setStatus('Dongle connected, waiting for the car (ignition on)...');
         busyInit=true; let up=true; try{ await initElm(); }catch(e){ up=false; } busyInit=false;
         if(!connected) continue;
-        if(!up){ setStatus('Dongle connected, waiting for the car (ignition on)...'); await sleepMs(4000); continue; }
-        carUp=true; enableUI();
+        if(!up){
+          // Car off: retry often at first, then every 30 s so the dongle is not poking the car's network for hours.
+          const quiet=Date.now()-lastCarSeen>120000;
+          setStatus('Dongle connected, waiting for the car (ignition on)...'+(quiet?' Checking every 30 s.':''));
+          await sleepMs(quiet?30000:4000); continue; }
+        carUp=true; lastCarSeen=Date.now(); enableUI();
       }
       const m=MODE();
       if(m==='normal' && !gT){
         await startLogging();               // returns when logging stops: car off, link lost, mode change or Stop
+        lastCarSeen=Date.now();
         await endSession(connected?'logging stopped':'dongle disconnected');
         if(logEndWhy==='silent'||!connected) carUp=false;
         if(!autoPause) await sleepMs(1500);
       } else if(m==='scan' && !fsUserPaused && !scanning && !(fsLoad()&&fsLoad().done)){
         const why=await fullScan();
-        if(why==='caroff'){ carUp=false; setStatus('Car is off. The sweep continues when it is back on.'); await sleepMs(4000); }
+        if(why==='caroff'){ carUp=false; lastCarSeen=Date.now(); setStatus('Car is off. The sweep continues when the engine is running again.'); await sleepMs(4000); }
         else await sleepMs(1500);
       } else {
         await sleepMs(1000);
@@ -1112,6 +1118,8 @@ const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
 const FS_OTHERS=['7D1','737','7A0','7D4','770','771','7C4','7B7','7D0','7A1','7C3','777','780','7A5','71A','7D2','7D5','7D6','7E5'];
 const FS_OTHERS_PLAN=FS_OTHERS.map(m=>m+' 0000 FFFF').join('\n');
 let fsActive=false, fsBusy=false;
+try{ const v=localStorage.getItem('obd_fs_engine'); if(v!==null) $('fsEngineOnly').checked=(v==='1'); }catch(e){}
+$('fsEngineOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_engine',$('fsEngineOnly').checked?'1':'0'); }catch(e){} };
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
 function fsSave(st){
@@ -1139,6 +1147,12 @@ function fsPos(st){
 }
 // Parked = speed 0 (engine ECU, PID 0D) and lever in P or N (transmission block 01A0, byte 21 = 0B or 09).
 async function fsParked(){
+  if($('fsEngineOnly').checked){
+    await setTarget('7E0');
+    const rp=String(await send('010C',1500)).replace(/\s/g,'').toUpperCase().match(/410C([0-9A-F]{2})([0-9A-F]{2})/);
+    if(!rp) return 'caroff';
+    if((parseInt(rp[1],16)*256+parseInt(rp[2],16))/4 < 400) return 'engine not running';
+  }
   if(!$('fsParkedOnly').checked) return '';
   await setTarget('7E0');
   const sp=String(await send('010D',1500)).replace(/\s/g,'').toUpperCase().match(/410D([0-9A-F]{2})/);
@@ -1197,6 +1211,7 @@ async function fullScan(){
       if(st.did-lastCheck>=16){
         const why=await fsParked();
         lastCheck=st.did;
+        if(why==='caroff'){ fsSave(st); say('car stopped answering: pausing here'); result='caroff'; break; }
         if(why){
           if(why!==reason){ say('paused: '+why); reason=why; }
           $('fsProg').textContent='Paused: '+why+' · '+fsPos(st);

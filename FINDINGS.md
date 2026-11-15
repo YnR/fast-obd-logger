@@ -147,6 +147,13 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
   polling; not yet measured.
 - 39 service-22 blocks per cycle: one pass every ~6 s (each block 0.05-0.24 s).
 
+## App behaviour notes
+
+- Sweep runs only while the engine is running (RPM above 400, checked about once a second), unless the
+  user unticks that option. Reason: an hour-long sweep with only the ignition on would drain the 12 V battery.
+- With the car off, the app retries the car every 4 s for 2 minutes, then every 30 s, to limit requests on the
+  car's network. Whether the MX+ itself goes to sleep with the engine off has not been checked.
+
 ## Test log
 
 | Date | File | Result |
