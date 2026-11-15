@@ -35,6 +35,7 @@
   .tile .where.driving{background:#5a3c00;color:#ffd58a}
   .tile small{font-size:11px}
   .tile.done{outline:1px solid var(--ok)}
+  .tile:disabled{opacity:.45}
   #planList li{margin:6px 0;font-size:16px}
   #driveOv{position:fixed;inset:0;z-index:200;background:#0b0e12;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:24px;text-align:center}
   #dTitle{color:var(--mut);font-size:16px;position:absolute;top:18px;left:0;right:0}
@@ -146,7 +147,7 @@
       <textarea id="fsPlan" rows="7" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:0;background:#232a33;color:var(--fg);font:12px ui-monospace,monospace"></textarea>
       <small>One line per range: module address, first data ID, last data ID (hex). Changing the plan needs Reset progress first.</small>
       <label style="display:block;margin-top:8px"><input type="checkbox" id="fsParkedOnly"> Sweep only when parked (P or N, speed 0). Off = sweep while driving too.</label>
-      <div class="row" style="margin-top:8px"><button id="fsPlanAll">Plan: everything on engine and transmission</button><button id="fsPlanIdent">Plan: identify all modules</button><button id="fsReset">Reset progress</button></div>
+      <div class="row" style="margin-top:8px"><button id="fsPlanOthers">Plan: other computers (ABS, radar, body...)</button><button id="fsPlanAll">Plan: everything on engine and transmission</button><button id="fsPlanIdent">Plan: identify all modules</button><button id="fsReset">Reset progress</button></div>
     </details>
     <pre id="fsOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:200px;overflow:auto"></pre>
   </div>
@@ -243,7 +244,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-h</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-i · other computers</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -874,8 +875,23 @@ const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
 // rear defrost, drive mode, cruise button, parking brake, Auto Hold, ESC OFF, steering, light switch positions.
 const TESTS={
   // ---- parked ----
-  custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',15)},
-  free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
+  // Run these once the sweep has found data blocks in other computers:
+  parkbrake:{name:'Parking brake (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>onOff('Parking brake',15,'In P. Parking brake RELEASED','Parking brake APPLIED')},
+  autohold:{name:'Auto Hold (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>onOff('Auto Hold',15)},
+  esc:{name:'ESC OFF (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>onOff('ESC',15,'ESC normal (no ESC OFF light)','Press ESC OFF so the light is ON')},
+  steering:{name:'Steering (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>onOff('Steering',12,'Hands off the wheel','Turn the wheel and keep light pressure on it')},
+  defrost:{name:'Rear defrost (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>onOff('Rear defrost',15)},
+  lightsx:{name:'Full beam and fog (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>[1,2].flatMap(k=>[
+    {id:'low'+k,  t:'Headlights on, low beam'+(k>1?' again':'')+'. Hold.', hold:15},
+    {id:'high'+k, t:'Full beam ON. Hold.', hold:15},
+    {id:'fog'+k,  t:'Back to low beam, fog lights ON. Hold.', hold:15}])},
+  drivemode:{name:'Drive mode (other computers)', where:'parked', mins:2, sets:['others'], steps:()=>[
+    {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:15},
+    {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
+    {id:'press2',t:'Press DRIVE MODE again now. Hold.', hold:15},
+    {id:'press3',t:'Press again until it is back where it started. Hold.', hold:15}]},
+  custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide','others'], custom:true, steps:(what)=>onOff(what||'It',15)},
+  free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide','others'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
   // ---- driving ----
   catch:{name:'Catch the hesitation', where:'driving', mins:10, sets:['tcmFast'],
@@ -915,6 +931,10 @@ const TESTS={
       {id:'cruise', t:'Cruise holding. Foot off the pedal', say:'Keep your foot off the pedal while cruise holds the speed.', secs:90},
       {id:'cancel', t:'Cancel cruise with the button', say:'Now cancel cruise with the cancel button, not the brake.', secs:10}]},
 };
+// Data blocks the sweep has found in computers other than engine and transmission (identification IDs excluded).
+function othersSet(){ const st=fsLoad(), seen=new Set();
+  return ((st&&st.found)||[]).filter(f=>!/^7E[01]$/.test(f.tx) && /^22/.test(f.raw) && !/^22F1/.test(f.raw))
+    .filter(f=>{ const k=f.tx+f.raw; if(seen.has(k)) return false; seen.add(k); return true; }).slice(0,30).map(f=>({tx:f.tx,raw:f.raw})); }
 let gT=null;       // active test
 let exOnly=null;   // when set, logging records exactly these requests
 let busyInit=false;
@@ -933,9 +953,10 @@ function speak(t){
 let testsDone={}; try{ testsDone=JSON.parse(localStorage.getItem('obd_tests_done')||'{}'); }catch(e){}
 function renderTiles(){
   $('tiles').innerHTML=Object.keys(TESTS).map(k=>{ const t=TESTS[k], d=testsDone[k];
-    return '<button class="tile'+(d?' done':'')+'" data-test="'+k+'"><span class="where '+t.where+'">'+(t.where==='driving'?'DRIVING':'PARKED')+'</span><b>'+esc(t.name)+'</b>'+
+    const none=t.sets.length===1&&t.sets[0]==='others'&&!othersSet().length;
+    return '<button class="tile'+(d?' done':'')+'" data-test="'+k+'"'+(none?' disabled':'')+'><span class="where '+t.where+'">'+(t.where==='driving'?'DRIVING':'PARKED')+'</span><b>'+esc(t.name)+'</b>'+
       (t.custom?'<input id="customName" class="noswipe" placeholder="what? e.g. heated seat" style="width:100%;padding:6px;border-radius:6px;border:0;background:#1b2027;color:var(--fg)">':'')+
-      '<small>'+(t.mins?'about '+t.mins+' min':'as long as you like')+(d?' · last run '+new Date(d).toLocaleDateString()+' ✓':'')+'</small></button>'; }).join('');
+      '<small>'+(none?'needs the other-computers sweep first · ':'')+(t.mins?'about '+t.mins+' min':'as long as you like')+(d?' · last run '+new Date(d).toLocaleDateString()+' ✓':'')+'</small></button>'; }).join('');
   document.querySelectorAll('.tile').forEach(b=>b.onclick=ev=>{
     if(ev.target.id==='customName') return;
     const k=b.dataset.test, t=TESTS[k];
@@ -987,7 +1008,7 @@ async function gStart(key, label){
   for(let k=0;k<40 && (running||busyInit||fsCur&&fsActiveBusy());k++) await sleepMs(250);
   await endSession('starting a test');
   setStatus('Checking the data blocks (stay stopped)...');
-  const want=[].concat(...def.sets.map(s=>SETS[s])), okList=[];
+  const want=[].concat(...def.sets.map(s=>s==='others'?othersSet():SETS[s])), okList=[];
   try{ let cur=''; for(const c of want){ if(cur!==c.tx){ await setTarget(c.tx); cur=c.tx; } if(parseUds(await send(c.raw,2000)).kind==='ok') okList.push(c); } }catch(e){}
   if(!okList.length){ gT=null; setStatus('The car did not answer its data blocks. Is the ignition on?'); try{ await applyTarget(); }catch(e){} return; }
   exOnly=okList;
@@ -1086,6 +1107,10 @@ const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
 const FS_DEFAULT=['7E1 2300 AFFF','7E1 B100 BFFF','7E1 C100 CFFF','7E1 D100 EFFF','7E1 F200 FFFF'].join('\n');
 // Identification plan (all discovered modules, F180-F1FF): paste into the plan box to use.
 const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
+// Other computers, most useful first: 7D1 (likely ABS/ESC), 737 (radar cruise / collision avoidance),
+// 7A0 (body control), 7D4 (likely power steering), 770 and 771 (junction boxes), then the rest.
+const FS_OTHERS=['7D1','737','7A0','7D4','770','771','7C4','7B7','7D0','7A1','7C3','777','780','7A5','71A','7D2','7D5','7D6','7E5'];
+const FS_OTHERS_PLAN=FS_OTHERS.map(m=>m+' 0000 FFFF').join('\n');
 let fsActive=false, fsBusy=false;
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
@@ -1230,6 +1255,7 @@ $('fsSave').onclick=()=>{ const st=fsLoad(); if(!st) return;
   saveFile(lines.join('\n'),'obd_sweep','txt','text/plain'); };
 const FS_ALL_PLAN=['7E1 0000 FFFF','7E0 0000 FFFF'].join('\n');
 $('fsPlanAll').onclick=()=>{ $('fsPlan').value=FS_ALL_PLAN; $('fsProg').textContent='Plan changed. Tap Reset progress to use it (this discards the current progress).'; };
+$('fsPlanOthers').onclick=()=>{ $('fsPlan').value=FS_OTHERS_PLAN; $('fsProg').textContent='Plan changed. Tap Reset progress to use it (this discards the current progress, so save the file first).'; };
 $('fsPlanIdent').onclick=()=>{ $('fsPlan').value=FS_IDENT_PLAN; $('fsProg').textContent='Plan changed. Tap Reset progress to use it (this discards the current progress).'; };
 setInterval(fsRefresh,1000);
 
@@ -1250,6 +1276,7 @@ function setMode(m){
   try{ localStorage.setItem('obd_mode',m); }catch(e){}
   if(m!=='monitor' && running && !exOnly){ logEndWhy='mode'; running=false; }
   if(m!=='sweep'){ fsActive=false; scanning=false; }
+  if(m==='identify') renderTiles();
   autoPause=false;
   fsRefresh(); window.scrollTo(0,0);
   if(NATIVE && autoOn() && !autoBusy && (connected||lastDev)) autoLoop();

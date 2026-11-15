@@ -114,6 +114,31 @@ likely live in other modules (body, brakes, steering), which the app does not re
 Light switch test (2026-11-14 18:10, two rounds, 5-8 readings per position): only the headlights bit above
 changed. Full beam, fog lights and the parking-light position are not visible in these blocks.
 
+## Other computers on the diagnostic bus
+
+Found by the Mac bridge (`discover`, 2026-11-14 morning): asking every address 700-7EF for `22 F190`, 21
+answered. All reply on request address + 8. Identity from `22 F187`/`F189`/`F191`/`F194` where available.
+Module roles are GUESSED from part-number prefixes and Hyundai/Kia conventions, not confirmed.
+
+| Request | Reply | Clue | Likely role (GUESSED) |
+|---|---|---|---|
+| 7E0 | 7E8 | VIN, F18C | Engine (CONFIRMED) |
+| 7E1 | 7E9 | 95441-4G480, U834 | Transmission (CONFIRMED) |
+| 737 | 73F | F189 "AEB SCC" | Radar: smart cruise / forward collision avoidance |
+| 7D1 | 7D9 | no ID returned | ABS / ESC |
+| 7D4 | 7DC | refuses 22 (NRC 11) | Power steering |
+| 7A0 | 7A8 | 954A0-C6090 | Body control module |
+| 770, 771 | 778, 779 | 91961-C5AA7, 91950-C6527 | Junction boxes |
+| 7B7 | 7BF | 95810-C6000 | Unknown |
+| 7A1 | 7A9 | 93570-C6BG0 | Switch module |
+| 7C3 | 7CB | 88952-C6500 | Seat module |
+| 7C4 | 7CC | "HY_G0UMP" software | Head unit or camera |
+| 777, 780, 7A5, 71A, 7D0, 7D2, 7D5, 7D6, 7E5 | +8 | little or no ID | Unknown |
+
+No live data is known yet for any of these. The app's Sweep mode has a "Plan: other computers" preset
+(full 0000-FFFF on each, ABS and radar first); Identify tests marked "(other computers)" use whatever it
+finds. The radar and ABS/ESC are of interest for the hesitation: both can request engine torque reduction.
+
 ## Logging rates on this phone and adapter
 
 - Mode 01 multi-PID groups to the engine only: about 8 samples/s per channel with no other blocks.
@@ -142,5 +167,4 @@ changed. Full beam, fog lights and the parking-light position are not visible in
 1. What happens at the moment of the hesitation? Needs a Monitor drive or "Catch the hesitation" with a tap
    at the moment it happens.
 2. Does it happen on cruise control (foot off the pedal)? If yes, the pedal and foot are ruled out.
-3. Other modules (ABS/ESC, body, steering) have not been discovered yet. The Mac bridge's `discover` op
-   would list which addresses answer; parked only.
+3. Live data in the other computers (ABS/ESC, radar, body): sweep them, then rerun the on/off tests.
