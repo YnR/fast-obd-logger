@@ -119,8 +119,8 @@
       <p><small>Channels (first 6 ticked are read every cycle; the rest are rotated in):</small></p>
       <div id="pidList"></div>
       <select id="ecuSel" title="Which control unit to read" style="margin-top:8px">
-        <option value="all">All ECUs (broadcast)</option>
-        <option value="0">ECU 1 only (engine, 7E0)</option>
+        <option value="0" selected>Engine computer only (7E0, recommended)</option>
+        <option value="all">All ECUs (broadcast: mixes the transmission's own pedal copy into pedal D)</option>
         <option value="1">ECU 2 only (7E1)</option>
       </select>
     </details>
@@ -243,7 +243,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-d · new tests</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-e · engine-only pedal</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -704,7 +704,7 @@ function onBase(v, times){
 }
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','ac_on','fan_on','headlights_on'];
 const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D',0x0C:'M'};   // M = manual gate
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
@@ -713,11 +713,19 @@ function decodeTcm(d){
   return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4, tcm_brake:d[24]&1,
           tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
 }
-async function readTcm(){
+async function readTcm(withLoads){
   await send('ATSH 7E1'); await send('ATCRA 7E9');
   const u=parseUds(await send('2201A0',1500));
+  let loads=null;
+  if(withLoads){   // engine computer blocks decoded on this car: A/C request, blower fan, headlights
+    await send('ATSH 7E0'); await send('ATCRA 7E8');
+    const a=parseUds(await send('22E004',1500)), b=parseUds(await send('22E009',1500));
+    if(a.kind==='ok'&&b.kind==='ok'&&a.data.length>=13&&b.data.length>=5)
+      loads={ac_on:(a.data[7]&3)?1:0, fan_on:(b.data[4]&1), headlights_on:(b.data[4]>>1)&1};
+  }
   await applyTarget();
-  return u.kind==='ok' ? decodeTcm(u.data) : null;
+  const t = u.kind==='ok' ? decodeTcm(u.data) : null;
+  return t ? Object.assign(t, loads||{}) : null;
 }
 async function startLogging(){
   if(!connected) return;
@@ -738,7 +746,7 @@ async function startLogging(){
   running=true; $('modeSel').disabled=true; $('btnStart').textContent='Stop'; $('btnStart').className='stop'; $('btnSave').disabled=false; $('mark').disabled=false;
   setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
   let rot=1, times=[], lastGood=performance.now(), cyc=0; logEndWhy='';
-  const tcmOn=$('useTcm').checked && (window.__proto==='6'||window.__proto==='8') && $('ecuSel').value==='all';
+  const tcmOn=$('useTcm').checked && (window.__proto==='6'||window.__proto==='8') && $('ecuSel').value!=='1';
   if(tcmOn) for(const c of TCM_COLS) if(!extraCols.includes(c)) extraCols.push(c);
   try{
     while(running){
@@ -751,7 +759,7 @@ async function startLogging(){
         const flags=onBase(v, times);
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
-      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); } }
+      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(cyc%20===1); if(t){ tcmLatest=t; addRow('T',{}, {}, t); } }
     }
   }catch(e){ log('Loop error: '+e.message); }
   running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
@@ -861,20 +869,11 @@ const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
   {id:'on'+k,  t:(on||what+' ON')+(k>1?' again':'')+'. Do it now, then hold.', hold:secs}]);
 // Parked steps: you tap NEXT (it turns green after "hold" seconds).
 // Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
-// Already identified on this car, so no longer offered as tests: gear lever, manual gate and +/-,
-// brake pedal, gears 1 to 8 and converter slip (see the Monitor decoding above).
+// Already done on this car, so no longer offered (results in FINDINGS.md): gear lever, manual gate and +/-,
+// brake pedal, gears 1 to 8, converter slip, lock-up at cruise, pedal sensor sweep, A/C, blower fan, headlights,
+// rear defrost (not visible in the engine or transmission blocks).
 const TESTS={
   // ---- parked ----
-  pedalsweep:{name:'Pedal sensors sweep', where:'parked', mins:1, sets:['engCore'], steps:()=>[
-    {id:'rest1', t:'Engine OFF, ignition ON. Foot off the pedal. Hold.', hold:5},
-    {id:'press', t:'Press the pedal SLOWLY all the way down, taking about 10 seconds.', hold:10},
-    {id:'release', t:'Release it SLOWLY, taking about 10 seconds.', hold:10},
-    {id:'steady', t:'Hold the pedal steady at about one third.', hold:15},
-    {id:'rest2', t:'Release. Hold.', hold:5}]},
-  ac:{name:'A/C button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('A/C',15)},
-  fan:{name:'Blower fan', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Fan',15,'A/C off. Fan OFF','Fan on HIGH')},
-  lights:{name:'Headlights', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Headlights',15)},
-  defrost:{name:'Rear defrost', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Rear defrost',15)},
   drivemode:{name:'Drive mode button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
     {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:15},
     {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
@@ -926,19 +925,6 @@ const TESTS={
       {id:'set',    t:'Set cruise, then TAP', say:'Set the cruise control. Tap the screen once it is holding.', tap:true, hold:3},
       {id:'cruise', t:'Cruise holding. Foot off the pedal', say:'Keep your foot off the pedal while cruise holds the speed.', secs:90},
       {id:'cancel', t:'Cancel cruise with the button', say:'Now cancel cruise with the cancel button, not the brake.', secs:10}]},
-  lockup:{name:'Lock-up at cruise', where:'driving', mins:3, sets:['tcmFast'],
-    plan:['Pick a road where you can hold 40 to 50 mph for about a minute. Lever in D.',
-          'Once you are cruising steadily, tap anywhere on the screen. That is the only tap.',
-          'The phone then speaks each cue: hold steady (20 s), press a little more (4 s), back to steady (12 s), press a little more (4 s), back to steady (12 s), lift off and coast (6 s).',
-          'It ends and saves by itself, and says so.'],
-    steps:()=>[
-      {id:'approach', t:'Get to a steady 40 to 50 mph, then TAP.', say:'Get to a steady forty to fifty miles per hour. Tap the screen anywhere once you are cruising.', tap:true, hold:3},
-      {id:'cruise1',  t:'Hold steady', say:'Hold your speed steady.', secs:20},
-      {id:'press1',   t:'Press a little more', say:'Press the pedal a little more.', secs:4},
-      {id:'cruise2',  t:'Back to steady', say:'Ease back to steady speed.', secs:12},
-      {id:'press2',   t:'Press a little more', say:'Press a little more again.', secs:4},
-      {id:'cruise3',  t:'Back to steady', say:'Back to steady speed.', secs:12},
-      {id:'coast',    t:'Lift off and coast', say:'Lift off the pedal completely and coast.', secs:6}]}
 };
 let gT=null;       // active test
 let exOnly=null;   // when set, logging records exactly these requests

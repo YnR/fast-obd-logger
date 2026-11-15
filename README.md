@@ -25,3 +25,6 @@ A single-page web app that logs OBD-II data from a **BLE ELM327-style dongle** a
 The same page runs inside two thin native shells that only move bytes to the dongle:
 - `android/`: classic Bluetooth SPP. A GitHub Action builds the APK and publishes it under Releases ("Android app (latest)"); sideload it.
 - `ios/`: Apple MFi (ExternalAccessory). See `ios/README.md`; build with XcodeGen + Xcode.
+
+## What has been decoded
+See [FINDINGS.md](FINDINGS.md): the byte map for this car (2020 Sorento 3.3L), what is confirmed versus guessed, and the test log.
