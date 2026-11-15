@@ -105,9 +105,12 @@ E02C E02D E0F2` never changed in any parked test.
 | E004, 6 | Brake | D1 off, DD on | LIKELY |
 | E0F1, 7 | Brake | C7 off, D7 on | LIKELY |
 | E0F1, 63 | Earlier A/C candidate | flipped in other tests too | dropped |
+| E004, 15, bit 0 | Cruise main switch (cruise light) | 30 off, 31 on | CONFIRMED (3 rounds, 7-9 readings each) |
+| E01F, 43 | Cruise state | 01 off, 04 on in the cruise test; 00/04/08 seen in the parking-brake test | GUESSED: cruise status, coding not understood |
 
-Not found in the engine or transmission blocks: rear defrost (3 clean rounds, nothing), drive mode button
-(one short run; to be repeated).
+Not found in the engine or transmission blocks (each tested with 3 rounds or 5 steps, 4-6 readings per
+state): rear defrost, drive mode button (twice), parking brake, Auto Hold, ESC OFF, steering wheel. These
+likely live in other modules (body, brakes, steering), which the app does not read.
 
 ## Logging rates on this phone and adapter
 
@@ -129,10 +132,12 @@ Not found in the engine or transmission blocks: rear defrost (3 clean rounds, no
 | 2026-11-14 14:46 | obd_test_pedalsweep | Pedal sensors agree, no dropouts |
 | 2026-11-14 14:47-14:53 | ac, fan, lights, defrost | A/C, fan, headlights decoded; defrost not visible |
 | 2026-11-14 15:06 | obd_ (Monitor, 13.5 min) | No marks. Found the broadcast pedal-D artefact above |
+| 2026-11-14 17:48-17:58 | drivemode, cruisebtn, parkbrake, autohold, steering, esc | Cruise main switch decoded; the rest not visible |
 
 ## Open questions
 
 1. What happens at the moment of the hesitation? Needs a Monitor drive or "Catch the hesitation" with a tap
    at the moment it happens.
 2. Does it happen on cruise control (foot off the pedal)? If yes, the pedal and foot are ruled out.
-3. Drive mode, cruise, parking brake, Auto Hold, ESC: Identify tests still to run.
+3. Other modules (ABS/ESC, body, steering) have not been discovered yet. The Mac bridge's `discover` op
+   would list which addresses answer; parked only.

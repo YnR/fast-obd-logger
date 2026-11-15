@@ -243,7 +243,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-e · engine-only pedal</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-f · cruise logged</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -704,7 +704,7 @@ function onBase(v, times){
 }
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','ac_on','fan_on','headlights_on'];
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','ac_on','fan_on','headlights_on','cruise_main'];
 const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D',0x0C:'M'};   // M = manual gate
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
@@ -717,11 +717,11 @@ async function readTcm(withLoads){
   await send('ATSH 7E1'); await send('ATCRA 7E9');
   const u=parseUds(await send('2201A0',1500));
   let loads=null;
-  if(withLoads){   // engine computer blocks decoded on this car: A/C request, blower fan, headlights
+  if(withLoads){   // engine computer blocks decoded on this car: A/C request, blower fan, headlights, cruise main switch
     await send('ATSH 7E0'); await send('ATCRA 7E8');
     const a=parseUds(await send('22E004',1500)), b=parseUds(await send('22E009',1500));
     if(a.kind==='ok'&&b.kind==='ok'&&a.data.length>=13&&b.data.length>=5)
-      loads={ac_on:(a.data[7]&3)?1:0, fan_on:(b.data[4]&1), headlights_on:(b.data[4]>>1)&1};
+      loads={ac_on:(a.data[7]&3)?1:0, fan_on:(b.data[4]&1), headlights_on:(b.data[4]>>1)&1, cruise_main:a.data.length>=15?(a.data[14]&1):''};
   }
   await applyTarget();
   const t = u.kind==='ok' ? decodeTcm(u.data) : null;
@@ -871,20 +871,9 @@ const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
 // Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
 // Already done on this car, so no longer offered (results in FINDINGS.md): gear lever, manual gate and +/-,
 // brake pedal, gears 1 to 8, converter slip, lock-up at cruise, pedal sensor sweep, A/C, blower fan, headlights,
-// rear defrost (not visible in the engine or transmission blocks).
+// rear defrost, drive mode, cruise button, parking brake, Auto Hold, ESC OFF, steering.
 const TESTS={
   // ---- parked ----
-  drivemode:{name:'Drive mode button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>[
-    {id:'start', t:'In P. Leave the drive mode as it is. Hold.', hold:15},
-    {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
-    {id:'press2',t:'Press DRIVE MODE again now. Hold.', hold:15},
-    {id:'press3',t:'Press DRIVE MODE again now. Hold.', hold:15},
-    {id:'press4',t:'Press again until it is back where it started. Hold.', hold:15}]},
-  cruisebtn:{name:'Cruise control button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Cruise',15,'Cruise control switched OFF (no cruise light)','Press the CRUISE button so the cruise light is ON')},
-  parkbrake:{name:'Parking brake', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Parking brake',15,'In P. Parking brake RELEASED','Parking brake APPLIED')},
-  autohold:{name:'Auto Hold button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Auto Hold',15)},
-  esc:{name:'ESC OFF button', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('ESC',15,'ESC normal (no ESC OFF light)','Press ESC OFF so the light is ON')},
-  steering:{name:'Steering wheel', where:'parked', mins:2, sets:['tcm','engWide'], steps:()=>onOff('Steering',12,'Hands off the wheel','Turn the wheel and keep light pressure on it')},
   custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',15)},
   free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
