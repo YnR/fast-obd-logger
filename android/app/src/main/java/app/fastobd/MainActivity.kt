@@ -122,6 +122,14 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun openUrl(url: String) {
+            if (!url.startsWith("https://github.com/")) return
+            runOnUiThread {
+                try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (e: Exception) { }
+            }
+        }
+
+        @JavascriptInterface
         fun keepAwake(on: Boolean) {
             runOnUiThread {
                 if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

@@ -26,6 +26,9 @@
   .tab{flex:1;padding:10px 4px;font-size:14px;background:#1b2027;color:var(--mut)}
   .tab.on{background:var(--acc);color:#04121f;font-weight:700}
   #status{font-size:13px;margin:6px 2px 2px}
+  #updBar{margin-top:6px;padding:10px 12px;border-radius:10px;background:#5a3c00;color:#ffe2a8;font-weight:600;display:flex;gap:8px;align-items:center}
+  #updBar span{flex:1}
+  #updBar button{padding:8px 12px}
   #markBar{padding:6px 0 0}
   #tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:10px}
   .tile{background:#232a33;border-radius:12px;padding:12px;text-align:left;min-height:96px;display:flex;flex-direction:column;gap:4px}
@@ -70,6 +73,7 @@
     <button class="tab" data-mode="sweep">2 · Sweep</button>
     <button class="tab" data-mode="identify">3 · Identify</button>
   </div>
+  <div id="updBar" style="display:none"></div>
   <div id="status">Not connected.</div>
   <div id="markBar"><button id="mark" disabled>I FELT IT (tap)</button></div>
   <div id="guide" style="display:none">
@@ -245,7 +249,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-j · sweep only with engine running</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-k · update check</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -1276,6 +1280,30 @@ setInterval(fsRefresh,1000);
 
 $('sweepGo').onclick=sweep;
 $('sweepSave').onclick=()=>saveFile(sweepReport.join('\n'),'obd_sweep','txt','text/plain');
+// ---- Update check (Android app only): compare this build with the latest GitHub release ----
+const BUILD_SHA='__BUILD_SHA__';   // replaced with the commit id when the APK is built
+const REL_API='https://api.github.com/repos/YnR/fast-obd-logger/releases/tags/android-latest';
+const REL_PAGE='https://github.com/YnR/fast-obd-logger/releases/tag/android-latest';
+async function checkUpdate(){
+  if(!NATIVE || !/^[0-9a-f]{40}$/.test(BUILD_SHA)) return;
+  try{
+    const r=await fetch(REL_API,{cache:'no-store',headers:{'Accept':'application/vnd.github+json'}});
+    if(!r.ok) return;
+    const j=await r.json();
+    const m=String(j.body||'').match(/\b([0-9a-f]{40})\b/);
+    if(!m || m[1]===BUILD_SHA) { $('updBar').style.display='none'; return; }
+    let skip=''; try{ skip=localStorage.getItem('obd_upd_skip')||''; }catch(e){}
+    if(skip===m[1]) return;
+    const when=j.published_at?new Date(j.published_at).toLocaleString():'';
+    $('updBar').innerHTML='<span>A newer version of the app is available'+(when?' ('+esc(when)+')':'')+'. Install it over this one.</span><button id="updGo">Download</button><button id="updLater">Later</button>';
+    $('updBar').style.display='flex';
+    $('updGo').onclick=()=>{ try{ AndroidBT.openUrl(REL_PAGE); }catch(e){ window.open(REL_PAGE,'_blank'); } };
+    $('updLater').onclick=()=>{ try{ localStorage.setItem('obd_upd_skip',m[1]); }catch(e){} $('updBar').style.display='none'; };
+    log('Update available: '+m[1].slice(0,7)+' (this build '+BUILD_SHA.slice(0,7)+')');
+  }catch(e){ /* offline: try again later */ }
+}
+setTimeout(checkUpdate,3000); setInterval(checkUpdate,3*3600*1000);
+
 // ---- three modes, tabs and swipe ----
 const MODES=['monitor','sweep','identify'], MODE_SEL={monitor:'normal',sweep:'scan',identify:'explore'}, PAGES={monitor:'pgMonitor',sweep:'pgSweep',identify:'pgIdentify'};
 let uiMode='';

@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Put the logger page into the app
-        run: mkdir -p android/app/src/main/assets && cp index.html android/app/src/main/assets/index.html
+        run: mkdir -p android/app/src/main/assets && cp index.html android/app/src/main/assets/index.html && sed -i "s/__BUILD_SHA__/${{ github.sha }}/" android/app/src/main/assets/index.html && grep -q "${{ github.sha }}" android/app/src/main/assets/index.html
       - name: Build debug APK
         working-directory: android
         run: gradle --no-daemon assembleDebug
