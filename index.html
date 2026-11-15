@@ -243,7 +243,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-g · light switch test</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-14-h</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -871,18 +871,9 @@ const onOff=(what,secs,off,on)=>[1,2,3].flatMap(k=>[
 // Driving steps: "tap" = tap anywhere on the screen, "secs" = moves on by itself. Every cue is spoken.
 // Already done on this car, so no longer offered (results in FINDINGS.md): gear lever, manual gate and +/-,
 // brake pedal, gears 1 to 8, converter slip, lock-up at cruise, pedal sensor sweep, A/C, blower fan, headlights,
-// rear defrost, drive mode, cruise button, parking brake, Auto Hold, ESC OFF, steering.
+// rear defrost, drive mode, cruise button, parking brake, Auto Hold, ESC OFF, steering, light switch positions.
 const TESTS={
   // ---- parked ----
-  lightmodes:{name:'Light switch positions', where:'parked', mins:4, sets:['tcm','engWide'], steps:()=>[1,2].flatMap(k=>{ const r=k>1?' (second round)':''; return [
-    {id:'off'+k,   t:'Light switch to OFF'+r+'. Hold.', hold:15},
-    {id:'auto'+k,  t:'Light switch to AUTO. Hold.', hold:15},
-    {id:'drl'+k,   t:'Light switch to the parking / daytime position (small lights only). Hold.', hold:15},
-    {id:'low'+k,   t:'Headlights ON, low beam. Hold.', hold:15},
-    {id:'high'+k,  t:'Full beam ON (push the stalk forward). Hold.', hold:15},
-    {id:'low2'+k,  t:'Back to low beam. Hold.', hold:15},
-    {id:'fog'+k,   t:'Fog lights ON as well, if your car has them. Hold.', hold:15},
-    {id:'fogoff'+k,t:'Fog lights OFF, keep low beam. Hold.', hold:15}]; })},
   custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide'], custom:true, steps:(what)=>onOff(what||'It',15)},
   free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},

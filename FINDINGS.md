@@ -101,7 +101,7 @@ E02C E02D E0F2` never changed in any parked test.
 | E0F1, 6, bits 2-3 | A/C | 01 off, 0D on | CONFIRMED (same test) |
 | E009, 5, bit 0 | Blower fan on | 70 off, 71 on | CONFIRMED (3 rounds) |
 | E004, 13, bit 2 | Blower fan on | F8 off, FC on | CONFIRMED (3 rounds) |
-| E009, 5, bit 1 | Headlights on | 70 off, 72 on | CONFIRMED (3 rounds) |
+| E009, 5, bit 1 | Headlights (low beam) on | 70 off, 72 on. Set for low beam, full beam, fog and AUTO when it is dark; clear for OFF and the parking-light position | CONFIRMED (3 rounds + light switch test, 2 rounds) |
 | E004, 6 | Brake | D1 off, DD on | LIKELY |
 | E0F1, 7 | Brake | C7 off, D7 on | LIKELY |
 | E0F1, 63 | Earlier A/C candidate | flipped in other tests too | dropped |
@@ -111,6 +111,8 @@ E02C E02D E0F2` never changed in any parked test.
 Not found in the engine or transmission blocks (each tested with 3 rounds or 5 steps, 4-6 readings per
 state): rear defrost, drive mode button (twice), parking brake, Auto Hold, ESC OFF, steering wheel. These
 likely live in other modules (body, brakes, steering), which the app does not read.
+Light switch test (2026-11-14 18:10, two rounds, 5-8 readings per position): only the headlights bit above
+changed. Full beam, fog lights and the parking-light position are not visible in these blocks.
 
 ## Logging rates on this phone and adapter
 
@@ -133,6 +135,7 @@ likely live in other modules (body, brakes, steering), which the app does not re
 | 2026-11-14 14:47-14:53 | ac, fan, lights, defrost | A/C, fan, headlights decoded; defrost not visible |
 | 2026-11-14 15:06 | obd_ (Monitor, 13.5 min) | No marks. Found the broadcast pedal-D artefact above |
 | 2026-11-14 17:48-17:58 | drivemode, cruisebtn, parkbrake, autohold, steering, esc | Cruise main switch decoded; the rest not visible |
+| 2026-11-14 18:10 | obd_test_lightmodes | Only low-beam-on visible; full beam, fog, parking lights not |
 
 ## Open questions
 
