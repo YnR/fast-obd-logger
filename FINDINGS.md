@@ -154,6 +154,10 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 - With the car off, the app retries the car every 4 s for 2 minutes, then every 30 s, to limit requests on the
   car's network. Whether the MX+ itself goes to sleep with the engine off has not been checked.
 
+- The Android app checks GitHub (release `android-latest`) at start and every 3 hours, and shows a banner when
+  the release was built from a different commit than the installed app. The commit id is stamped into the
+  page at build time.
+
 ## Test log
 
 | Date | File | Result |
