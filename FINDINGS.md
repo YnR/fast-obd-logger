@@ -158,6 +158,22 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
   the release was built from a different commit than the installed app. The commit id is stamped into the
   page at build time.
 
+- Monitor flags events (rows with group E, columns `event` and `event_info`), from build 2026-11-15-a:
+  - `decel`: speed falling 2 mph/s or more over about 1 s, above 8 mph, pedal held steady (within 4 points)
+    or at rest, and no brake in the transmission sample that follows. Beeps.
+  - `jolt`: phone accelerometer, horizontal part only, above 1.2 m/s² for at least 0.25 s, above 8 mph, no
+    brake. Beeps.
+  - `slip`: converter locked, gear settled, above 15 mph, speed steady, but the input shaft turns 8% or
+    more faster than the gear's ratio. Beeps.
+  - `flare`: engine RPM up 150 or more during an upshift with the pedal steady. Beeps.
+  - `tcc`: converter goes from locked to more than 100 rpm slip in 4th or higher at steady pedal. No beep;
+    it happened about 30 times in the 2026-11-15 drive.
+  - Checked against the 2026-11-15 drive: decel, slip and flare would not have fired at all (every
+    2 mph/s deceleration in that drive had the brake on). Jolt could not be checked (phone data in old logs
+    is only 7 samples/s).
+  - Measured gear ratios (turbine rpm per mph, locked, steady): 4th 61 (not 63), 5th 52, 6th 43, 7th 34;
+    steady samples sit within about ±5% of these.
+
 ## Test log
 
 | Date | File | Result |
