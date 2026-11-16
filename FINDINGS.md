@@ -151,8 +151,12 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 - Sweep runs only while the engine is running (RPM above 400, checked about once a second), unless the
   user unticks that option. Reason: an hour-long sweep with only the ignition on would drain the 12 V battery.
-- With the car off, the app retries the car every 4 s for 2 minutes, then every 30 s, to limit requests on the
-  car's network. Whether the MX+ itself goes to sleep with the engine off has not been checked.
+- Battery saver (build 2026-11-16-a): after 5 minutes with the engine off (car not answering, or RPM below
+  400 with the ignition on), the app stops logging or sweeping, turns off GPS and the motion sensor, lets
+  the screen sleep, and checks for the car every 15 s. If the phone is on battery it also releases its CPU
+  wake lock, so checks may be further apart while the phone sleeps; plugging in the phone (car started)
+  wakes it at once. Whether the car's USB socket switches off with the ignition, and whether the MX+ goes
+  to sleep with the engine off, have not been checked.
 
 - The Android app checks GitHub (release `android-latest`) at start and every 3 hours, and shows a banner when
   the release was built from a different commit than the installed app. The commit id is stamped into the

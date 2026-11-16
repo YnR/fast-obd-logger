@@ -47,6 +47,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         try { socket?.close() } catch (e: IOException) { }   // drop any link left over from an earlier screen
         socket = null
+        val pf = android.content.IntentFilter(Intent.ACTION_POWER_CONNECTED); pf.addAction(Intent.ACTION_POWER_DISCONNECTED)
+        registerReceiver(powerRx, pf)
         tts = TextToSpeech(this, TextToSpeech.OnInitListener { status -> ttsReady = (status == TextToSpeech.SUCCESS) })
         web = WebView(this)
         setContentView(web)
@@ -82,6 +84,13 @@ class MainActivity : Activity() {
         startKeepAlive()
     }
 
+    // Tell the page when the phone starts charging: in a car that usually means the engine just started.
+    private val powerRx = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: Intent?) {
+            js("window.__power&&window.__power(" + (i?.action == Intent.ACTION_POWER_CONNECTED) + ")")
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         startKeepAlive()
@@ -107,6 +116,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         selfClose = true
+        try { unregisterReceiver(powerRx) } catch (e: Exception) { }
         try { tts?.shutdown() } catch (e: Exception) { }
         stopService(Intent(this, KeepAliveService::class.java))
         try { socket?.close() } catch (e: IOException) { }
@@ -119,6 +129,11 @@ class MainActivity : Activity() {
             return Build.VERSION.SDK_INT < 31 ||
                 (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
                  checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED)
+        }
+
+        @JavascriptInterface
+        fun setIdle(on: Boolean) {
+            try { startService(Intent(this@MainActivity, KeepAliveService::class.java).putExtra("idle", on)) } catch (e: Exception) { }
         }
 
         @JavascriptInterface

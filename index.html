@@ -251,7 +251,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-15-a · event detection</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-16-a · battery saver</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -376,6 +376,9 @@ const SERVICES = [0xfff0,0xffe0,0x18f0,0xfff1,0xae00,0xffb0,0xffc0,0xffd0,0xffe5
   '0000fff0-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb'];
 let device=null, server=null, wChar=null, nChar=null;
 let rxBuf='', pending=null, running=false, connected=false;
+function motionH(ev){ const a=ev.accelerationIncludingGravity; if(a){ lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)}; joltFeed(+a.x||0,+a.y||0,+a.z||0); } }
+function motionOn(){ if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',motionH); } }
+function motionOff(){ if(window.__motionOn){ window.__motionOn=false; window.removeEventListener('devicemotion',motionH); } }
 let rows=[], latest={}, prevPed=null, dips=0, hist=[], lastGeo={}, lastAcc={}, wakeLock=null, t0=0, geoId=null;
 const enc=new TextEncoder(), dec=new TextDecoder();
 
@@ -522,6 +525,7 @@ if(NATIVE){
 }
 function pickPaired(list){ return new Promise(res=>{ pickList=list; pickRes=res; renderDevices(); }); }
 async function connectNative(auto){
+  engineOffSince=0; wake('Connect tapped');
   try{
     if(AndroidBT.refresh){ AndroidBT.refresh(); await new Promise(r=>setTimeout(r,700)); }
     if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); setStatus('Allow the Bluetooth permission, then tap Connect again.'); return; }
@@ -574,6 +578,34 @@ async function endSession(why){
     if(await saveCsv(csv())){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} }
   } else if(rows.length){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; }
 }
+
+// ---- Battery saver: after 5 minutes with the engine off, the app goes to sleep ----
+// Asleep: GPS and motion sensor off, screen allowed to turn off, and the car is checked only every 15 s.
+// It wakes when the engine runs again, when the phone starts charging (car started), or when you tap Connect.
+const IDLE_AFTER=window.__idleAfter||5*60*1000, IDLE_CHECK=window.__idleCheck||15000;
+let engineOffSince=0, asleep=false, wakeNow=false;
+function noteEngine(running){ if(running){ engineOffSince=0; if(asleep) wake('engine running'); } else if(!engineOffSince) engineOffSince=Date.now(); }
+const engineIdle=()=>engineOffSince && Date.now()-engineOffSince>IDLE_AFTER;
+function goSleep(){
+  if(asleep) return; asleep=true;
+  if(geoId!=null){ try{ navigator.geolocation.clearWatch(geoId); }catch(e){} geoId=null; }
+  motionOff();
+  try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null;
+  try{ AndroidBT.keepAwake(false); }catch(e){}
+  try{ AndroidBT.setIdle(true); }catch(e){}
+  log('Engine off for 5 minutes: battery saver on, checking every 15 s');
+}
+function wake(why){
+  if(!asleep) return; asleep=false; wakeNow=true;
+  try{ AndroidBT.keepAwake($('keepOn').checked); }catch(e){}
+  try{ AndroidBT.setIdle(false); }catch(e){}
+  log('Battery saver off ('+why+')');
+}
+// Sleep that ends early when something wakes the app.
+async function nap(ms){ const end=Date.now()+ms; wakeNow=false; while(Date.now()<end && !wakeNow) await sleepMs(Math.min(500,end-Date.now())); wakeNow=false; }
+window.__power=on=>{ if(on){ log('Phone started charging'); engineOffSince=0; wake('phone charging'); } };
+async function readRpm(){ await setTarget('7E0'); const m=String(await send('010C',1500)).replace(/\s/g,'').toUpperCase().match(/410C([0-9A-F]{2})([0-9A-F]{2})/); await applyTarget(); return m?(parseInt(m[1],16)*256+parseInt(m[2],16))/4:null; }
+
 async function autoLoop(){
   if(autoBusy || !NATIVE) return;
   autoBusy=true;
@@ -584,7 +616,8 @@ async function autoLoop(){
         if(!lastDev){ setStatus('Tap Connect once to choose your dongle.'); break; }
         if(!AndroidBT.hasPerm()){ AndroidBT.askPerm(); await sleepMs(3000); continue; }
         setStatus('Looking for '+lastDev.name+'...');
-        if(!(await tryOpen(lastDev))){ setStatus('Could not reach '+lastDev.name+' ('+(lastOpenErr||'no answer')+'). Retrying...'); await sleepMs(4000); continue; }
+        if(!(await tryOpen(lastDev))){ noteEngine(false); if(engineIdle()) goSleep();
+          setStatus('Could not reach '+lastDev.name+' ('+(lastOpenErr||'no answer')+'). '+(asleep?'Battery saver: retrying every 15 s.':'Retrying...')); await nap(asleep?IDLE_CHECK:4000); continue; }
       }
       if(!carUp){
         if(gT||scanning||fsActive||running){ await sleepMs(1000); continue; }
@@ -592,22 +625,28 @@ async function autoLoop(){
         busyInit=true; let up=true; try{ await initElm(); }catch(e){ up=false; } busyInit=false;
         if(!connected) continue;
         if(!up){
-          // Car off: retry often at first, then every 30 s so the dongle is not poking the car's network for hours.
-          const quiet=Date.now()-lastCarSeen>120000;
-          setStatus('Dongle connected, waiting for the car (ignition on)...'+(quiet?' Checking every 30 s.':''));
-          await sleepMs(quiet?30000:4000); continue; }
+          // Car off: check every 4 s for the first 5 minutes, then every 15 s with the battery saver on.
+          noteEngine(false); if(engineIdle()) goSleep();
+          setStatus('Dongle connected, waiting for the car (ignition on)...'+(asleep?' Battery saver: checking every 15 s.':''));
+          await nap(asleep?IDLE_CHECK:4000); continue; }
         carUp=true; lastCarSeen=Date.now(); enableUI();
+      }
+      if(engineIdle() && !gT){
+        const rpm=await readRpm().catch(()=>null);
+        if(rpm==null){ carUp=false; continue; }
+        if(rpm<400){ goSleep(); setStatus('Ignition on, engine off. Battery saver: checking every 15 s.'); await nap(IDLE_CHECK); continue; }
+        noteEngine(true);
       }
       const m=MODE();
       if(m==='normal' && !gT){
         await startLogging();               // returns when logging stops: car off, link lost, mode change or Stop
         lastCarSeen=Date.now();
         await endSession(connected?'logging stopped':'dongle disconnected');
-        if(logEndWhy==='silent'||!connected) carUp=false;
+        if(logEndWhy==='silent'||!connected){ carUp=false; noteEngine(false); }
         if(!autoPause) await sleepMs(1500);
       } else if(m==='scan' && !fsUserPaused && !scanning && !(fsLoad()&&fsLoad().done)){
         const why=await fullScan();
-        if(why==='caroff'){ carUp=false; lastCarSeen=Date.now(); setStatus('Car is off. The sweep continues when the engine is running again.'); await sleepMs(4000); }
+        if(why==='caroff'){ carUp=false; lastCarSeen=Date.now(); noteEngine(false); setStatus('Car is off. The sweep continues when the engine is running again.'); await sleepMs(4000); }
         else await sleepMs(1500);
       } else {
         await sleepMs(1000);
@@ -823,7 +862,7 @@ async function startLogging(){
     geoId=navigator.geolocation.watchPosition(p=>{lastGeo={lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),mph:p.coords.speed!=null?+(p.coords.speed*2.23694).toFixed(2):''};},()=>{},{enableHighAccuracy:true});
   if($('useMotion').checked){
     try{ if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(e){}
-    if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a){ lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)}; joltFeed(+a.x||0,+a.y||0,+a.z||0); }}); }
+    motionOn();
   }
   try{ wakeLock=await navigator.wakeLock?.request('screen'); }catch(e){}
   if(explore) return runExplore();
@@ -839,6 +878,7 @@ async function startLogging(){
   try{
     while(running){
       if(MODE()!=='normal'){ running=false; break; }
+      if(autoOn() && latest['0C']!=null){ noteEngine(latest['0C']>=400); if(engineIdle()){ log('Engine off for 5 minutes: stopping the log'); logEndWhy='engineoff'; running=false; break; } }
       if(autoOn() && performance.now()-lastGood>15000){ log('No answer from the car for 15 s'); logEndWhy='silent'; running=false; break; }
       const picks=[0]; if(groups.length>1){ picks.push(rot); rot = rot>=groups.length-1 ? 1 : rot+1; }
       for(const gi of picks){
@@ -1232,7 +1272,8 @@ async function fsParked(){
     await setTarget('7E0');
     const rp=String(await send('010C',1500)).replace(/\s/g,'').toUpperCase().match(/410C([0-9A-F]{2})([0-9A-F]{2})/);
     if(!rp) return 'caroff';
-    if((parseInt(rp[1],16)*256+parseInt(rp[2],16))/4 < 400) return 'engine not running';
+    const on=(parseInt(rp[1],16)*256+parseInt(rp[2],16))/4 >= 400; noteEngine(on);
+    if(!on) return 'engine not running';
   }
   if(!$('fsParkedOnly').checked) return '';
   await setTarget('7E0');
@@ -1297,7 +1338,8 @@ async function fullScan(){
           if(why!==reason){ say('paused: '+why); reason=why; }
           $('fsProg').textContent='Paused: '+why+' · '+fsPos(st);
           fsSave(st);
-          await new Promise(res=>setTimeout(res,2000));
+          if(why==='engine not running' && engineIdle()){ goSleep(); $('fsProg').textContent='Paused: engine off. Battery saver: checking every 15 s · '+fsPos(st); await nap(IDLE_CHECK); }
+          else await new Promise(res=>setTimeout(res,2000));
           lastCheck=-1000;
           continue;
         }
