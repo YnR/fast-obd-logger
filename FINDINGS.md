@@ -172,6 +172,30 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 | 2026-11-14 15:06 | obd_ (Monitor, 13.5 min) | No marks. Found the broadcast pedal-D artefact above |
 | 2026-11-14 17:48-17:58 | drivemode, cruisebtn, parkbrake, autohold, steering, esc | Cruise main switch decoded; the rest not visible |
 | 2026-11-14 18:10 | obd_test_lightmodes | Only low-beam-on visible; full beam, fog, parking lights not |
+| 2026-11-15 16:59 | obd_ (Monitor, 19 min) | First two marks; see the section above. Engine-only fix confirmed |
+
+## First marked event (Monitor drive 2026-11-15 16:59, 19 min, engine-only polling)
+
+Two taps at 434.4 s and 436.7 s, around 22 mph. Sequence (pedal 2.7 samples/s, transmission 1.35/s,
+phone accelerometer about 7/s):
+
+- 432.8 s: both pedal sensors back at rest (D 14.9, E 14.5), commanded throttle 3.9%. Foot off, or both
+  sensors reading rest together.
+- 433.5 s: upshift 4th to 5th with the pedal at rest; torque falls to 0% by 434.8 s; converter locks
+  (slip about 0) at 434.2 s.
+- 434.4 s: first tap. Nothing visible in speed or the accelerometer yet.
+- 434.9-435.8 s: deceleration of about 0.14 g (phone) and 3-4 mph/s (speed 22.4 to 19.3 mph), then speed
+  flat at 18.6 mph for 2 s.
+- Brake switch: off in the transmission sample at about 434.8 s, on at 435.5-436.5 s. With samples 0.7 s
+  apart, the brake may have been pressed at the start of the deceleration.
+- 436.7 s: second tap. Pedal pressed again at 437.4 s.
+
+Pedal D and E agreed throughout this drive (5 of 3107 samples differ by more than 3 points, all while the
+pedal was moving). No dropouts.
+
+The foot-off upshift followed by converter lock happened 13 times in this drive; only this one was marked,
+so on its own it is not distinctive. Open: did the driver lift off at 432.8 s and touch the brake at
+about 435 s? If neither, the pedal reading rest for 4 s and the deceleration are the event.
 
 ## Open questions
 
