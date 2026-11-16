@@ -103,6 +103,7 @@
       <button id="btnRecover">Recover last</button>
     </div>
     <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
+    <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b></small></p>
     <div id="tcmGrid" class="grid" style="margin-bottom:8px">
       <div class="cell"><span>lever</span><b id="tLever">–</b></div>
       <div class="cell"><span>gear</span><b id="tGear">–</b></div>
@@ -120,6 +121,7 @@
     <details>
       <summary>What gets logged</summary>
       <label class="chk" style="display:block"><input type="checkbox" id="useTcm" checked> Transmission data: lever, gear, turbine speed, converter slip (slows the other channels a little)</label>
+      <label class="chk" style="display:block"><input type="checkbox" id="evBeep" checked> Beep when a deceleration, jolt, clutch slip or shift flare is detected (tap I FELT IT if you felt it too)</label>
       <label class="chk" style="display:block"><input type="checkbox" id="autoMode"> Auto: reconnect to the last dongle, start when the car is on, save a file when it turns off</label>
       <p><small>Channels (first 6 ticked are read every cycle; the rest are rotated in):</small></p>
       <div id="pidList"></div>
@@ -249,7 +251,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-14-k · update check</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-15-a · event detection</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -706,6 +708,7 @@ function onBase(v, times){
   if(v['49']!==undefined){
     if(prevPed!==null && prevPed>=20 && v['49']<=15.5){ flags.dip=1; dips++; $('dips').textContent=dips; const c=$('c49'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
     prevPed=v['49'];
+    evBase(v);
     hist.push({t:performance.now(),ped:v['49'],cmd:latest['4C'],trq:latest['62']});
     const cut=performance.now()-30000; while(hist.length&&hist[0].t<cut) hist.shift();
     times.push(performance.now()); while(times.length>20) times.shift();
@@ -713,6 +716,79 @@ function onBase(v, times){
   }
   return flags;
 }
+
+// ---- Event detectors (Monitor). Thresholds tuned on the 2026-11-15 drive: none of them fired there except
+// "converter unlock", which happens often and is logged without a beep. Every event is a row with
+// group E and columns event / event_info, so it can be lined up with the I FELT IT marks afterwards.
+const EXP_RATIO={1:168,2:124,3:81,4:61,5:52,6:43,7:34,8:28};   // turbine rpm per mph in each gear, measured on this car
+let evCounts={}, evLast={}, spdHist=[], tcmHist=[], evPending=[], evTcmOn=false, shiftStart=null;
+const jolt={base:null,t:0,above:0,peak:0};
+function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0}; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn;
+  for(const k in evCounts){ const e=$('ev_'+k); if(e) e.textContent='0'; } }
+function evFlag(type, info){
+  const now=performance.now();
+  if(evLast[type] && now-evLast[type]<4000) return;
+  evLast[type]=now; evCounts[type]=(evCounts[type]||0)+1; const e=$('ev_'+type); if(e) e.textContent=evCounts[type];
+  addRow('E',{}, {}, {event:type, event_info:info.replace(/,/g,';')});   // no commas inside a CSV cell
+  if(type!=='tcc' && $('evBeep').checked) beep();
+  log('Detected '+type+': '+info);
+}
+function pedalWindow(sec){ const now=performance.now(), w=spdHist.filter(s=>s.t>=now-sec*1000 && s.ped!=null);
+  if(!w.length) return null; const p=w.map(s=>s.ped); return {min:Math.min(...p), max:Math.max(...p)}; }
+function brakeSince(t){ return tcmHist.some(s=>s.t>=t && s.brake===1); }
+// Events that must wait for the next transmission sample to know whether the brake was pressed.
+function evQueue(type, info){ if(!evTcmOn){ evFlag(type, info+', brake unknown'); return; }
+  if(!evPending.some(p=>p.type===type)) evPending.push({type, info, t:performance.now()}); }
+function evResolve(){ const now=performance.now();
+  evPending=evPending.filter(p=>{ if(now-p.t<600) return true; if(!brakeSince(p.t-2500)) evFlag(p.type, p.info+', brake off'); return false; }); }
+function evBase(v){
+  const now=performance.now();
+  spdHist.push({t:now, v:v['0D'], ped:v['49'], rpm:v['0C']});
+  while(spdHist.length && spdHist[0].t<now-4000) spdHist.shift();
+  if(v['0D']==null) return;
+  const w=spdHist.filter(s=>s.v!=null && s.t>=now-1300);
+  if(w.length<2 || w[0].t>now-900) return;
+  const rate=(w[0].v-w[w.length-1].v)/((w[w.length-1].t-w[0].t)/1000);
+  if(rate<2.0 || v['0D']<8) return;
+  const p=pedalWindow(1.3); if(!p) return;
+  if(p.max<15.5) evQueue('decel', rate.toFixed(1)+' mph/s, pedal at rest');
+  else if(p.min>=16 && p.max-p.min<=4) evQueue('decel', rate.toFixed(1)+' mph/s, pedal held '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');
+}
+function joltFeed(x,y,z){
+  if(!running || exOnly) return;
+  const now=performance.now(), dt=jolt.t?Math.min(0.2,(now-jolt.t)/1000):0; jolt.t=now;
+  if(!jolt.base){ jolt.base=[x,y,z]; return; }
+  const k=Math.min(1,dt/1.5); const b=jolt.base; b[0]+=(x-b[0])*k; b[1]+=(y-b[1])*k; b[2]+=(z-b[2])*k;
+  const g=Math.hypot(b[0],b[1],b[2])||1, dx=x-b[0], dy=y-b[1], dz=z-b[2], along=(dx*b[0]+dy*b[1]+dz*b[2])/g;
+  const horiz=Math.sqrt(Math.max(0, dx*dx+dy*dy+dz*dz-along*along));      // ignore the up-down part (bumps)
+  if(horiz>1.2){ jolt.above+=dt; jolt.peak=Math.max(jolt.peak,horiz); }
+  else { if(jolt.above>=0.25){ const s=spdHist.length?spdHist[spdHist.length-1].v:null; if(s==null||s>8){ const p=pedalWindow(1.5);
+           evQueue('jolt', 'peak '+jolt.peak.toFixed(1)+' m/s², '+(jolt.above*1000).toFixed(0)+' ms'+(p?(p.max<15.5?', pedal at rest':', pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%'):'')); } }
+         jolt.above=0; jolt.peak=0; }
+}
+function evTcm(t){
+  const now=performance.now(), g=parseInt(t.tcm_gear,10), tg=parseInt(t.tcm_gear_target,10);
+  const last=spdHist.length?spdHist[spdHist.length-1]:{}, spd=last.v, rpm=last.rpm;
+  const cur={t:now, gear:g, tgt:tg, slip:t.tcm_slip_rpm, turb:t.tcm_turbine_rpm, brake:t.tcm_brake, spd, rpm};
+  const prev=tcmHist.length?tcmHist[tcmHist.length-1]:null;
+  tcmHist.push(cur); while(tcmHist.length && tcmHist[0].t<now-10000) tcmHist.shift();
+  evResolve();
+  if(isNaN(g)||isNaN(tg)||spd==null) return;
+  const p=pedalWindow(1.5), steady=p && p.min>=16 && p.max-p.min<=4;
+  const settled=prev && prev.gear===g && prev.tgt===g && tg===g;
+  // converter unlocks at steady throttle in a high gear (common: logged, no beep)
+  if(settled && g>=4 && spd>15 && steady && Math.abs(prev.slip)<30 && cur.slip>100) evFlag('tcc','gear '+g+', slip '+cur.slip.toFixed(0)+' rpm, pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');
+  // clutch slip: converter locked but the input shaft turns faster than this gear allows
+  // (skipped while speed is changing fast, because the speed reading lags the transmission reading)
+  const sw=spdHist.filter(s=>s.v!=null && s.t>=now-1500), acc=sw.length>1?Math.abs(sw[sw.length-1].v-sw[0].v)/((sw[sw.length-1].t-sw[0].t)/1000||1):0;
+  if(settled && EXP_RATIO[g] && spd>15 && Math.abs(cur.slip)<30 && acc<2){ const r=cur.turb/spd/EXP_RATIO[g];
+    if(r>=1.08) evFlag('slip','gear '+g+', input shaft '+((r-1)*100).toFixed(0)+'% too fast'+(p?', pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%':'')); }
+  // shift flare: engine speed rises during an upshift while the pedal is steady
+  if(tg>g && g>=1){ if(!shiftStart) shiftStart={rpm, gear:g};
+    else if(rpm!=null && shiftStart.rpm!=null && rpm-shiftStart.rpm>=150 && steady) { evFlag('flare','upshift '+shiftStart.gear+' to '+tg+', engine +'+(rpm-shiftStart.rpm).toFixed(0)+' rpm'); shiftStart.rpm=rpm; } }
+  else shiftStart=null;
+}
+
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
 const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','ac_on','fan_on','headlights_on','cruise_main'];
@@ -747,7 +823,7 @@ async function startLogging(){
     geoId=navigator.geolocation.watchPosition(p=>{lastGeo={lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),mph:p.coords.speed!=null?+(p.coords.speed*2.23694).toFixed(2):''};},()=>{},{enableHighAccuracy:true});
   if($('useMotion').checked){
     try{ if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(e){}
-    window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a) lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)};});
+    if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',ev=>{const a=ev.accelerationIncludingGravity; if(a){ lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)}; joltFeed(+a.x||0,+a.y||0,+a.z||0); }}); }
   }
   try{ wakeLock=await navigator.wakeLock?.request('screen'); }catch(e){}
   if(explore) return runExplore();
@@ -758,6 +834,7 @@ async function startLogging(){
   setStatus('Logging...'); log('Logging '+sel.length+' channels in '+groups.length+' group(s)');
   let rot=1, times=[], lastGood=performance.now(), cyc=0; logEndWhy='';
   const tcmOn=$('useTcm').checked && (window.__proto==='6'||window.__proto==='8') && $('ecuSel').value!=='1';
+  evReset(tcmOn); for(const c of ['event','event_info']) if(!extraCols.includes(c)) extraCols.push(c);
   if(tcmOn) for(const c of TCM_COLS) if(!extraCols.includes(c)) extraCols.push(c);
   try{
     while(running){
@@ -770,7 +847,7 @@ async function startLogging(){
         const flags=onBase(v, times);
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
-      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(cyc%20===1); if(t){ tcmLatest=t; addRow('T',{}, {}, t); } }
+      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(cyc%20===1); if(t){ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); } }
     }
   }catch(e){ log('Loop error: '+e.message); }
   running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
