@@ -162,9 +162,13 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
   the release was built from a different commit than the installed app. The commit id is stamped into the
   page at build time.
 
-- Monitor (build 2026-11-16-c) reads only pedal D and E, commanded throttle, torque, RPM and speed in one
-  request, plus the transmission block every other cycle (STPX on OBDLink adapters, otherwise one header
-  switch each way). A/C, fan, headlights and cruise are no longer read in Monitor.
+- Monitor (build 2026-11-17-a) reads only pedal D and E, commanded throttle, torque, RPM and speed in one
+  request, plus the transmission block every other cycle (ATSH/ATCRA switched to 7E1/7E9 and back). A/C,
+  fan, headlights and cruise are no longer read in Monitor.
+- Do not use a shared reply filter (ATCF 7E8 + ATCM 7FE) or STPX on this adapter/car: build 2026-11-16-c
+  did, and on 2026-11-17 every transmission reply was lost and 42% of engine replies came back incomplete
+  (99.9% complete with ATSH/ATCRA switching). The phone simulator did not catch this because it ignores
+  adapter filter commands; adapter-level changes need a real drive to verify.
 - Monitor flags events (rows with group E, columns `event` and `event_info`), from build 2026-11-15-a:
   - `decel`: speed falling 2 mph/s or more over about 1 s, above 8 mph, pedal held steady (within 4 points)
     or at rest, and no brake in the transmission sample that follows. Beeps.
@@ -197,6 +201,7 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 | 2026-11-14 18:10 | obd_test_lightmodes | Only low-beam-on visible; full beam, fog, parking lights not |
 | 2026-11-15 16:59 | obd_ (Monitor, 19 min) | First two marks; see the section above. Engine-only fix confirmed |
 | 2026-11-16 17:15 | obd_ (Monitor, 15 min) | Three marks: two next to brief pedal releases, one on cruise control |
+| 2026-11-17 08:25 | obd_ (Monitor, 14 min) | Three marks, no pedal drops near them; transmission data lost (app bug) |
 
 ## First marked event (Monitor drive 2026-11-15 16:59, 19 min, engine-only polling)
 
@@ -239,6 +244,19 @@ about 435 s? If neither, the pedal reading rest for 4 s and the deceleration are
   (2.0-3.0 mph/s). 4 "jolt" events lasted 0.4-1.8 s with the pedal held: likely cornering. Changed in build
   2026-11-16-c: coasting logged as `coast` without a beep; jolts use only the front-back direction once it
   has been learnt from speed changes, and must last 0.25-1.5 s; new `blip` event for the pedal pattern above.
+
+## Monitor drive 2026-11-17 08:25 (14 min, three marks; build 2026-11-16-c, no transmission data)
+
+- The transmission block failed for the whole drive (see the filter note above), so the marks have engine
+  data only. Pedal about 3.7 samples/s.
+- Marks 1 and 2 (214.1 s, 217.1 s): gentle acceleration from 25 to 30 mph, pedal steady at 32%, torque
+  steady 43-47%. No pedal drop near either mark. Engine RPM drops that look like upshifts at 211.4, about
+  215.0-215.6 and 218.6 s; the marks fall between them.
+- Mark 3 (460.9 s, 52 mph): the pedal had eased from 36% to 25.5% over 458-460 s; an RPM drop of about 250
+  at 458.8 s (shift or converter lock) 2.1 s before the mark. A pedal drop to rest followed at 463.5 s.
+- So these three marks are not next to pedal drops, unlike two of the 2026-11-16 marks. With transmission
+  data missing, shifts and converter lock cannot be confirmed.
+- 7 pedal blips in the drive, none within 10 s of a mark.
 
 ## Open questions
 

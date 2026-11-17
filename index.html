@@ -253,7 +253,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-16-c · fast monitor, haptic mark</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-17-a · transmission reads fixed</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -859,24 +859,15 @@ function decodeTcm(d){
   return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4, tcm_brake:d[24]&1,
           tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
 }
-// Fast transmission read. The receive filter accepts both 7E8 (engine) and 7E9 (transmission), so only the
-// request address changes. On OBDLink/STN adapters STPX sends to 7E1 without touching the header at all.
+// Transmission read: switch the request and reply addresses to the transmission and back, the method
+// that worked on this car. (Build 2026-11-16-c tried a shared reply filter and STPX instead: on 2026-11-17 it
+// lost every transmission reply and cut 42% of engine replies short, so it was removed.)
 let tcmPath='';
-async function setupFastTcm(){
-  await send('ATCRA'); await send('ATCF 7E8'); await send('ATCM 7FE');
-  tcmPath='atsh';
-  const sti=String(await send('STI',1500)||'');
-  if(/STN/i.test(sti)){
-    const u=parseUds(await send('STPX h:7E1, d:2201A0, r:1',1500));
-    if(u.kind==='ok') tcmPath='stpx';
-  }
-  await send('ATSH 7E0');
-  log('Transmission reads via '+(tcmPath==='stpx'?'STPX (no header switching)':'header switch')+(sti?' · adapter '+sti.trim().replace(/\s+/g,' '):''));
-}
+async function setupFastTcm(){ tcmPath='atsh'; }
 async function readTcm(){
-  let u;
-  if(tcmPath==='stpx') u=parseUds(await send('STPX h:7E1, d:2201A0, r:1',1500));
-  else { await send('ATSH 7E1'); u=parseUds(await send('2201A0',1500)); await send('ATSH 7E0'); }
+  await send('ATSH 7E1'); await send('ATCRA 7E9');
+  const u=parseUds(await send('2201A0',1500));
+  await send('ATSH 7E0'); await send('ATCRA 7E8');
   return u.kind==='ok' ? decodeTcm(u.data) : null;
 }
 async function startLogging(){
