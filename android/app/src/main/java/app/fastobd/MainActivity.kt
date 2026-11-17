@@ -132,6 +132,16 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun vibrate(ms: Int) {
+            try {
+                val vm = getSystemService(android.os.VibratorManager::class.java)
+                vm.defaultVibrator.vibrate(android.os.VibrationEffect.createOneShot(ms.toLong().coerceIn(10, 500), android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } catch (e: Throwable) {
+                try { web.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } catch (x: Throwable) { }
+            }
+        }
+
+        @JavascriptInterface
         fun setIdle(on: Boolean) {
             try { startService(Intent(this@MainActivity, KeepAliveService::class.java).putExtra("idle", on)) } catch (e: Exception) { }
         }
