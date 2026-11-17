@@ -162,6 +162,9 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
   the release was built from a different commit than the installed app. The commit id is stamped into the
   page at build time.
 
+- Monitor (build 2026-11-16-c) reads only pedal D and E, commanded throttle, torque, RPM and speed in one
+  request, plus the transmission block every other cycle (STPX on OBDLink adapters, otherwise one header
+  switch each way). A/C, fan, headlights and cruise are no longer read in Monitor.
 - Monitor flags events (rows with group E, columns `event` and `event_info`), from build 2026-11-15-a:
   - `decel`: speed falling 2 mph/s or more over about 1 s, above 8 mph, pedal held steady (within 4 points)
     or at rest, and no brake in the transmission sample that follows. Beeps.
@@ -193,6 +196,7 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 | 2026-11-14 17:48-17:58 | drivemode, cruisebtn, parkbrake, autohold, steering, esc | Cruise main switch decoded; the rest not visible |
 | 2026-11-14 18:10 | obd_test_lightmodes | Only low-beam-on visible; full beam, fog, parking lights not |
 | 2026-11-15 16:59 | obd_ (Monitor, 19 min) | First two marks; see the section above. Engine-only fix confirmed |
+| 2026-11-16 17:15 | obd_ (Monitor, 15 min) | Three marks: two next to brief pedal releases, one on cruise control |
 
 ## First marked event (Monitor drive 2026-11-15 16:59, 19 min, engine-only polling)
 
@@ -216,6 +220,25 @@ pedal was moving). No dropouts.
 The foot-off upshift followed by converter lock happened 13 times in this drive; only this one was marked,
 so on its own it is not distinctive. Open: did the driver lift off at 432.8 s and touch the brake at
 about 435 s? If neither, the pedal reading rest for 4 s and the deceleration are the event.
+
+## Monitor drive 2026-11-16 17:15 (15 min, three marks; older build, pedal 2.4 samples/s)
+
+- Marks 1 and 2 (91.3 s and 99.95 s, 37 mph, 7th gear, pedal about 31%): each sits next to a moment where
+  both pedal sensors drop to their rest value (D 14.9, E 14.5) for one sample, commanded throttle falls to
+  3-4% and engine torque from 47% to 14-17%, then the pedal returns over about 1 s. At 90.3 s (31.8% to
+  rest, back to 31.4% by 91.8 s), at 92.6-92.9 s (19.6%, then rest), and at 100.3-100.7 s (24.3%, then rest,
+  back to 32.5%). The way down passes through intermediate values (19.6%, 24.3%) and the way back rises over
+  several samples, which looks like the pedal physically moving rather than an electrical dropout. Not
+  decided: foot movement versus the pedal assembly.
+- The same brief release-and-return happened 21 times in this drive; only 2 were marked.
+- Mark 3 (260.3 s, 63 mph, 8th): on cruise control (pedal at rest, commanded throttle 17%, torque 42-44%).
+  Nothing changed at the mark. 2.4 s earlier (257.9 s) the converter re-locked after 4 s of about 100 rpm
+  slip (engine RPM fell 110 in half a second). If this mark was the same feeling, the pedal cannot be the
+  only cause.
+- Detector review: 10 "decel" events fired with the pedal at rest and no brake seen, all ordinary coasting
+  (2.0-3.0 mph/s). 4 "jolt" events lasted 0.4-1.8 s with the pedal held: likely cornering. Changed in build
+  2026-11-16-c: coasting logged as `coast` without a beep; jolts use only the front-back direction once it
+  has been learnt from speed changes, and must last 0.25-1.5 s; new `blip` event for the pedal pattern above.
 
 ## Open questions
 

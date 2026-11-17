@@ -105,7 +105,7 @@
       <button id="btnRecover">Recover last</button>
     </div>
     <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
-    <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b></small></p>
+    <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b> · pedal blip <b id="ev_blip">0</b> · coasting <b id="ev_coast">0</b></small></p>
     <div id="tcmGrid" class="grid" style="margin-bottom:8px">
       <div class="cell"><span>lever</span><b id="tLever">–</b></div>
       <div class="cell"><span>gear</span><b id="tGear">–</b></div>
@@ -253,7 +253,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-16-b · fast monitor, haptic mark</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-16-c · fast monitor, haptic mark</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -765,15 +765,15 @@ function onBase(v, times){
 // group E and columns event / event_info, so it can be lined up with the I FELT IT marks afterwards.
 const EXP_RATIO={1:168,2:124,3:81,4:61,5:52,6:43,7:34,8:28};   // turbine rpm per mph in each gear, measured on this car
 let evCounts={}, evLast={}, spdHist=[], tcmHist=[], evPending=[], evTcmOn=false, shiftStart=null;
-const jolt={base:null,t:0,above:0,peak:0};
-function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0}; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn;
+const jolt={base:null,t:0,above:0,peak:0,dev:[0,0,0],fwd:[0,0,0],fwdN:0};
+function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0,coast:0,blip:0}; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn; blip=null; jolt.fwd=[0,0,0]; jolt.fwdN=0;
   for(const k in evCounts){ const e=$('ev_'+k); if(e) e.textContent='0'; } }
 function evFlag(type, info){
   const now=performance.now();
   if(evLast[type] && now-evLast[type]<4000) return;
   evLast[type]=now; evCounts[type]=(evCounts[type]||0)+1; const e=$('ev_'+type); if(e) e.textContent=evCounts[type];
   addRow('E',{}, {}, {event:type, event_info:info.replace(/,/g,';')});   // no commas inside a CSV cell
-  if(type!=='tcc' && $('evBeep').checked) beep();
+  if(!['tcc','coast','blip'].includes(type) && $('evBeep').checked) beep();
   log('Detected '+type+': '+info);
 }
 function pedalWindow(sec){ const now=performance.now(), w=spdHist.filter(s=>s.t>=now-sec*1000 && s.ped!=null);
@@ -788,13 +788,15 @@ function evBase(v){
   const now=performance.now();
   spdHist.push({t:now, v:v['0D'], ped:v['49'], rpm:v['0C']});
   while(spdHist.length && spdHist[0].t<now-4000) spdHist.shift();
+  evPedal(v);
   if(v['0D']==null) return;
   const w=spdHist.filter(s=>s.v!=null && s.t>=now-1300);
   if(w.length<2 || w[0].t>now-900) return;
   const rate=(w[0].v-w[w.length-1].v)/((w[w.length-1].t-w[0].t)/1000);
+  if(Math.abs(rate)>=0.8 && v['0D']>5){ const k=-rate; jolt.fwd[0]+=k*jolt.dev[0]; jolt.fwd[1]+=k*jolt.dev[1]; jolt.fwd[2]+=k*jolt.dev[2]; jolt.fwdN++; }
   if(rate<2.0 || v['0D']<8) return;
   const p=pedalWindow(1.3); if(!p) return;
-  if(p.max<15.5) evQueue('decel', rate.toFixed(1)+' mph/s, pedal at rest');
+  if(p.max<15.5) evQueue('coast', rate.toFixed(1)+' mph/s, pedal at rest');
   else if(p.min>=16 && p.max-p.min<=4) evQueue('decel', rate.toFixed(1)+' mph/s, pedal held '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');
 }
 function joltFeed(x,y,z){
@@ -803,11 +805,25 @@ function joltFeed(x,y,z){
   if(!jolt.base){ jolt.base=[x,y,z]; return; }
   const k=Math.min(1,dt/1.5); const b=jolt.base; b[0]+=(x-b[0])*k; b[1]+=(y-b[1])*k; b[2]+=(z-b[2])*k;
   const g=Math.hypot(b[0],b[1],b[2])||1, dx=x-b[0], dy=y-b[1], dz=z-b[2], along=(dx*b[0]+dy*b[1]+dz*b[2])/g;
-  const horiz=Math.sqrt(Math.max(0, dx*dx+dy*dy+dz*dz-along*along));      // ignore the up-down part (bumps)
+  const hx=dx-along*b[0]/g, hy=dy-along*b[1]/g, hz=dz-along*b[2]/g;        // ignore the up-down part (bumps)
+  const s=Math.min(1,dt/0.4); jolt.dev[0]+=(hx-jolt.dev[0])*s; jolt.dev[1]+=(hy-jolt.dev[1])*s; jolt.dev[2]+=(hz-jolt.dev[2])*s;
+  // Once the forward direction is known (learnt from speeding up and slowing down), use only the front-back
+  // push, so cornering does not count. Until then use the whole horizontal push.
+  const fl=Math.hypot(...jolt.fwd), known=jolt.fwdN>=20 && fl>0;
+  const horiz=known ? Math.abs((hx*jolt.fwd[0]+hy*jolt.fwd[1]+hz*jolt.fwd[2])/fl) : Math.hypot(hx,hy,hz);
   if(horiz>1.2){ jolt.above+=dt; jolt.peak=Math.max(jolt.peak,horiz); }
-  else { if(jolt.above>=0.25){ const s=spdHist.length?spdHist[spdHist.length-1].v:null; if(s==null||s>8){ const p=pedalWindow(1.5);
+  else { if(jolt.above>=0.25 && jolt.above<=1.5){ const s=spdHist.length?spdHist[spdHist.length-1].v:null; if(s==null||s>8){ const p=pedalWindow(1.5);
            evQueue('jolt', 'peak '+jolt.peak.toFixed(1)+' m/s², '+(jolt.above*1000).toFixed(0)+' ms'+(p?(p.max<15.5?', pedal at rest':', pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%'):'')); } }
          jolt.above=0; jolt.peak=0; }
+}
+// Pedal blip: both pedal sensors go to rest for under a second, then back near where they were. Seen right
+// before two marks on 2026-11-16 and 19 more times that drive. Logged without a beep.
+let blip=null;
+function evPedal(v){
+  const p=v['49']; if(p==null) return; const now=performance.now();
+  const prev=spdHist.length>1?spdHist[spdHist.length-2]:null;
+  if(!blip && prev && prev.ped!=null && prev.ped>=20 && p<=15.5) blip={t:now, from:prev.ped};
+  else if(blip){ if(now-blip.t>1200) blip=null; else if(p>=blip.from-10){ evFlag('blip','pedal '+blip.from.toFixed(0)+'% to rest and back in '+((now-blip.t)/1000+0.2).toFixed(1)+' s, both sensors'); blip=null; } }
 }
 function evTcm(t){
   const now=performance.now(), g=parseInt(t.tcm_gear,10), tg=parseInt(t.tcm_gear_target,10);
