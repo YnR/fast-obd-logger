@@ -253,7 +253,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-17-a · transmission reads fixed</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-17-b · shorter transmission sweep</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -1249,7 +1249,7 @@ const FS_MODULES=['71A','737','770','771','777','780','7A0','7A1','7A5','7B7','7
 const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
 // Default plan: continue the 7E1 sweep. 04E0-0FFF and 1200-1FFF were finished on the Mac bridge;
 // 2300-AFFF was interrupted before any hit, so it restarts from its first ID.
-const FS_DEFAULT=['7E1 2300 AFFF','7E1 B100 BFFF','7E1 C100 CFFF','7E1 D100 EFFF','7E1 F200 FFFF'].join('\n');
+const FS_DEFAULT=['7E1 B100 BFFF','7E1 C100 CFFF','7E1 F200 FFFF'].join('\n');
 // Identification plan (all discovered modules, F180-F1FF): paste into the plan box to use.
 const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
 // Other computers, most useful first: 7D1 (likely ABS/ESC), 737 (radar cruise / collision avoidance),
@@ -1261,6 +1261,18 @@ try{ const v=localStorage.getItem('obd_fs_engine'); if(v!==null) $('fsEngineOnly
 $('fsEngineOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_engine',$('fsEngineOnly').checked?'1':'0'); }catch(e){} };
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
+// 2026-11-17: shortened the transmission sweep. 7E1 2300-73DF was swept (nothing); drop the rest of
+// 2300-AFFF and all of D100-EFFF from a saved sweep, keep B1xx, C1xx, F2xx and anything already found.
+(function(){ try{
+  const st=fsLoad(); if(!st||st.done||!st.plan||st.trimmed) return;
+  const keep=r=>r.tx==='7E1'&&((r.from>=0xB100&&r.to<=0xBFFF)||(r.from>=0xC100&&r.to<=0xCFFF)||(r.from>=0xF200&&r.to<=0xFFFF));
+  if(!st.plan.some(r=>r.tx==='7E1'&&r.from===0x2300)) return;
+  const np=[]; let ni=0, nd=null;
+  st.plan.forEach((r,j)=>{ if(j<st.i||!keep(r)) return; if(j===st.i&&st.did!=null){ nd=st.did; } np.push(r); });
+  st.plan=np; st.i=0; st.did=nd; st.miss=0; st.trimmed=true;
+  if(!np.length) st.done=true;
+  localStorage.setItem(FS_KEY, JSON.stringify(st));
+}catch(e){} })();
 function fsSave(st){
   if(!st) return true;
   st.saved=Date.now();
