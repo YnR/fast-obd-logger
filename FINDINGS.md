@@ -114,6 +114,11 @@ likely live in other modules (body, brakes, steering), which the app does not re
 Light switch test (2026-11-14 18:10, two rounds, 5-8 readings per position): only the headlights bit above
 changed. Full beam, fog lights and the parking-light position are not visible in these blocks.
 
+Heated seats (test 2026-11-17 18:21, off/on/off, about 16 s each, engine idling): no on/off flag in any
+engine or transmission block. Two bytes dipped by one count while on and recovered when off: `E018` byte 17
+(A1 to A0) and `E0F1` byte 49 (83 to 82). Probably the engine computer seeing the extra electrical load
+(voltage or alternator), not a seat signal. Single cycle, so GUESSED at best.
+
 ## Other computers on the diagnostic bus
 
 Found by the Mac bridge (`discover`, 2026-11-14 morning): asking every address 700-7EF for `22 F190`, 21
@@ -198,6 +203,7 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 | 2026-11-14 14:47-14:53 | ac, fan, lights, defrost | A/C, fan, headlights decoded; defrost not visible |
 | 2026-11-14 15:06 | obd_ (Monitor, 13.5 min) | No marks. Found the broadcast pedal-D artefact above |
 | 2026-11-14 17:48-17:58 | drivemode, cruisebtn, parkbrake, autohold, steering, esc | Cruise main switch decoded; the rest not visible |
+| 2026-11-17 18:21 | custom: heated seats | Not visible; two 1-count dips likely from electrical load |
 | 2026-11-14 18:10 | obd_test_lightmodes | Only low-beam-on visible; full beam, fog, parking lights not |
 | 2026-11-15 16:59 | obd_ (Monitor, 19 min) | First two marks; see the section above. Engine-only fix confirmed |
 | 2026-11-16 17:15 | obd_ (Monitor, 15 min) | Three marks: two next to brief pedal releases, one on cruise control |
