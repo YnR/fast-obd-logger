@@ -259,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-17-d · background sweep at red lights</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-18-a · transmission read every cycle</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -586,7 +586,7 @@ async function endSession(why){
   if(bgNewFinds){ bgNewFinds=0; try{ await saveFile(fsReport(bgLoad(),'Fast OBD Logger background sweep'),'obd_bgsweep','txt','text/plain'); }catch(e){} }
   if(rows.length>=10){
     log('Session ended ('+why+'): saving '+rows.length+' rows');
-    if(await saveCsv(csv())){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; try{ localStorage.removeItem('obdlog_last'); }catch(e){} }
+    if(await saveCsv(csv())){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; clearLocal(); }
   } else if(rows.length){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; }
 }
 
@@ -771,7 +771,7 @@ function onBase(v, times){
 // "converter unlock", which happens often and is logged without a beep. Every event is a row with
 // group E and columns event / event_info, so it can be lined up with the I FELT IT marks afterwards.
 const EXP_RATIO={1:168,2:124,3:81,4:61,5:52,6:43,7:34,8:28};   // turbine rpm per mph in each gear, measured on this car
-let evCounts={}, evLast={}, spdHist=[], tcmHist=[], evPending=[], evTcmOn=false, shiftStart=null;
+let slipRun=0, evCounts={}, evLast={}, spdHist=[], tcmHist=[], evPending=[], evTcmOn=false, shiftStart=null;
 const jolt={base:null,t:0,above:0,peak:0,dev:[0,0,0],fwd:[0,0,0],fwdN:0};
 function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0,coast:0,blip:0}; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn; blip=null; jolt.fwd=[0,0,0]; jolt.fwdN=0;
   for(const k in evCounts){ const e=$('ev_'+k); if(e) e.textContent='0'; } }
@@ -847,7 +847,10 @@ function evTcm(t){
   // clutch slip: converter locked but the input shaft turns faster than this gear allows
   // (skipped while speed is changing fast, because the speed reading lags the transmission reading)
   const sw=spdHist.filter(s=>s.v!=null && s.t>=now-1500), acc=sw.length>1?Math.abs(sw[sw.length-1].v-sw[0].v)/((sw[sw.length-1].t-sw[0].t)/1000||1):0;
-  if(settled && EXP_RATIO[g] && spd>15 && Math.abs(cur.slip)<30 && acc<2){ const r=cur.turb/spd/EXP_RATIO[g];
+  // (two readings in a row, since the transmission is read every cycle from build 2026-11-18-a)
+  const slipNow=settled && EXP_RATIO[g] && spd>15 && Math.abs(cur.slip)<30 && acc<2 && cur.turb/spd/EXP_RATIO[g]>=1.08;
+  slipRun=slipNow?slipRun+1:0;
+  if(slipRun>=2){ const r=cur.turb/spd/EXP_RATIO[g];
     if(r>=1.08) evFlag('slip','gear '+g+', input shaft '+((r-1)*100).toFixed(0)+'% too fast'+(p?', pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%':'')); }
   // shift flare: engine speed rises during an upshift while the pedal is steady
   if(tg>g && g>=1){ if(!shiftStart) shiftStart={rpm, gear:g};
@@ -983,7 +986,7 @@ async function startLogging(){
         const flags=onBase(v, times);
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
-      if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); }
+      if(tcmOn && running){ cyc++; const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); }
         if(running){ const bw=bgReady(); if(bw){ await bgBurst(bw); lastGood=performance.now(); } } }
     }
   }catch(e){ log('Loop error: '+e.message); }
@@ -1253,7 +1256,7 @@ async function gEnd(why){
   exOnly=null;
   log(t.name+' ended ('+why+'), '+rows.length+' rows');
   let saved=false;
-  if(rows.length){ saved=await saveFile(csv(),'obd_test_'+t.key+(t.label?'_'+t.label.replace(/[^\w-]+/g,'-'):''),'csv','text/csv'); if(saved){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; extraCols=[]; try{ localStorage.removeItem('obdlog_last'); }catch(e){} } }
+  if(rows.length){ saved=await saveFile(csv(),'obd_test_'+t.key+(t.label?'_'+t.label.replace(/[^\w-]+/g,'-'):''),'csv','text/csv'); if(saved){ rows=[]; hist=[]; dips=0; t0=0; prevPed=null; extraCols=[]; clearLocal(); } }
   if(saved && why==='finished'){ testsDone[t.key]=Date.now(); try{ localStorage.setItem('obd_tests_done',JSON.stringify(testsDone)); }catch(e){} renderTiles(); }
   speak(saved?'Test complete. File saved.':'Test ended.');
   setStatus(t.name+(saved?' saved to Downloads. Send the file to Claude, or pick the next test.':' ended.'));
@@ -1597,7 +1600,26 @@ function draw(){
 
 // ---- CSV save / recover ----
 function csv(){ const H=HEADER.concat(extraCols); return [H.join(','),...rows.map(r=>{ const a=r.slice(); while(a.length<H.length) a.push(''); return a.join(','); })].join('\n'); }
-function saveLocal(){ try{ localStorage.setItem('obdlog_last', csv()); }catch(e){} }
+// Crash-safe copy of the log on the phone. Only the rows added since the last copy are written (one small chunk
+// every 20 s), so the cost stays the same however long the drive is. (Until build 2026-11-18-a the whole log was
+// rebuilt and rewritten every 20 s, which got heavier as the drive went on.)
+let localN=0, localRows=0;
+function clearLocal(){ try{ const n=+localStorage.getItem('obdlog_n')||0; for(let i=0;i<n+2;i++) localStorage.removeItem('obdlog_c'+i);
+  ['obdlog_n','obdlog_h','obdlog_last'].forEach(k=>localStorage.removeItem(k)); }catch(e){} localN=0; localRows=0; }
+function saveLocal(){ try{
+  if(rows.length<localRows){ localN=0; localRows=0; }
+  if(rows.length===localRows) return;
+  localStorage.setItem('obdlog_h', HEADER.concat(extraCols).join(','));
+  localStorage.setItem('obdlog_c'+localN, rows.slice(localRows).map(r=>r.join(',')).join('\n'));
+  localN++; localRows=rows.length; localStorage.setItem('obdlog_n', String(localN));
+}catch(e){} }
+function loadLocal(){ try{
+  const n=+localStorage.getItem('obdlog_n')||0; if(!n) return localStorage.getItem('obdlog_last');
+  const H=localStorage.getItem('obdlog_h')||''; const L=H.split(',').length, out=[H];
+  for(let i=0;i<n;i++){ const c=localStorage.getItem('obdlog_c'+i); if(!c) continue;
+    for(const l of c.split('\n')){ const k=l.split(',').length; out.push(k<L?l+','.repeat(L-k):l); } }
+  return out.join('\n');
+}catch(e){ return null; } }
 setInterval(()=>{ if(running) saveLocal(); },20000);
 async function saveFile(text, prefix, ext, mime){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
@@ -1609,7 +1631,7 @@ async function saveFile(text, prefix, ext, mime){
 }
 const saveCsv = text => saveFile(text,'obd','csv','text/csv');
 $('btnSave').onclick=()=>saveCsv(csv());
-$('btnRecover').onclick=()=>{ let t=null; try{t=localStorage.getItem('obdlog_last');}catch(e){} if(t) saveCsv(t); else log('Nothing stored.'); };
+$('btnRecover').onclick=()=>{ const t=loadLocal(); if(t) saveCsv(t); else log('Nothing stored.'); };
 if(!NATIVE && !navigator.bluetooth) setStatus('This browser has no Web Bluetooth. Open this page in Chrome on Android (https or localhost).');
 </script>
 </body>

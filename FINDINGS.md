@@ -154,6 +154,13 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
+- Build 2026-11-18-a: transmission block read every cycle (was every other). Expected on the car from the
+  11-17 timings (engine group about 0.14 s, transmission read about 0.26 s with the address switches): both
+  about 2.5 readings/s, against engine 3.65 and transmission 1.83 before. Clutch-slip detector now needs two
+  readings in a row (one reading gave a false alarm in a braking simulation). The crash-safe copy of the log
+  now writes only the rows added since the last copy (every 20 s) instead of rebuilding the whole log; the
+  old way grew with drive length and is a suspect for the rate falling late in the 2026-11-18 drive.
+
 - Background sweep (build 2026-11-17-d): in Monitor mode, whenever the car is stopped for 1 s (speed 0,
   engine running, pedal D at or under 16.5%) and either in P/N or in D/M with the brake on (TCM byte 25),
   the app asks the other computers for data IDs. Between every request in D (every 4th in P/N) it reads
