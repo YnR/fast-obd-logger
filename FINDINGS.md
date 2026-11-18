@@ -56,7 +56,7 @@ between ~0 and ~15 at rest and disagreeing with pedal E while moving.
 
 Identification IDs that answer: `F100 F180 F181 F182 F186 F187 F189 F18C F191 F192 F194`. Live blocks:
 `01A0` (45 bytes), `01A1` (45), `01A2` (10), `01A3` (10). `01A7` (66) looks like learned adaptations.
-`01F2` exists but answers "conditions not correct". Guessed IDs `0101 0102 E001 E002 1101 1940 1104 1944
+`01F2` exists but answers "conditions not correct". Sweep 2026-11-17 17:08 (partial): `2300-3E20` answer nothing (all "not supported"). Guessed IDs `0101 0102 E001 E002 1101 1940 1104 1944
 1102 1941`: not supported.
 
 ### Block `22 01 A0`
