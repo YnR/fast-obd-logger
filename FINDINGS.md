@@ -202,6 +202,7 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 | 2026-11-15 16:59 | obd_ (Monitor, 19 min) | First two marks; see the section above. Engine-only fix confirmed |
 | 2026-11-16 17:15 | obd_ (Monitor, 15 min) | Three marks: two next to brief pedal releases, one on cruise control |
 | 2026-11-17 08:25 | obd_ (Monitor, 14 min) | Three marks, no pedal drops near them; transmission data lost (app bug) |
+| 2026-11-17 16:50 | obd_ (Monitor, 11 min) | Three marks after a steady-pedal downshift, a converter lock and a 3-4 upshift |
 
 ## First marked event (Monitor drive 2026-11-15 16:59, 19 min, engine-only polling)
 
@@ -257,6 +258,34 @@ about 435 s? If neither, the pedal reading rest for 4 s and the deceleration are
 - So these three marks are not next to pedal drops, unlike two of the 2026-11-16 marks. With transmission
   data missing, shifts and converter lock cannot be confirmed.
 - 7 pedal blips in the drive, none within 10 s of a mark.
+
+## Monitor drive 2026-11-17 16:50 (11 min, three marks; build 2026-11-17-a)
+
+Transmission reads fixed: 99.9% complete engine replies, pedal 3.65 samples/s, transmission 1.83/s.
+
+- Mark 1 (513.1 s, 27 mph, pedal steady 33-35%, torque 43-55%): 2.1 s after the transmission asked for a
+  5th to 4th DOWNSHIFT at 511.0 s with the pedal steady and speed rising (engine 1395 to 1813 rpm; shift
+  done at 512.3 s). Before it, 5th had run with large converter slip (200-490 rpm, engine about 1500).
+- Mark 2 (516.7 s): 1.1 s after the converter locked in 4th at 515.3-515.6 s (slip 141 to about 0, engine
+  1870 to 1654 rpm).
+- Mark 3 (629.5 s, 15.5 mph): at the end of a 3rd to 4th upshift requested at 627.3 s and completed at
+  629.7 s (2.4 s, slow end of normal), during which commanded throttle and torque were cut (39% to 25%) while
+  the pedal eased from 31% to 25%. 1.4 s after the mark the transmission asked for 4th to 3rd again at
+  630.9 s with the pedal steady (gear hunting 3-4-3 within 4 s). A jolt (0.2 g, 0.7 s) was detected at
+  627.2 s.
+- No pedal blip within 30 s of any mark. Pedal sensors steady and in agreement at all three.
+- In the whole drive: 24 shifts with the pedal steady and the brake off, 4 of them downshifts (3>2 twice at
+  10-13 mph, 5>4 before mark 1, 4>3 after mark 3).
+- Shift timing (target change to gear change, at the 0.55 s sampling): median 1.6-1.9 s, 90% under 2.4 s,
+  over the two most recent drives.
+
+Pattern so far over marks with transmission data (2026-11-16 and -17): the felt events follow a shift or
+the converter locking by 1-2.5 s more often than a pedal blip (pedal blip near 2 marks of 6; shift or lock
+before 4). Tapping usually lags the feeling by roughly half a second to a second and a half.
+
+Public bulletin found: Kia TSB TRA095 "3.3L GDI 8AT TCU gear shift logic improvement" for Sorento (UMa)
+covers 2019MY cars built 24 Jan to 24 Sep 2018 with acceleration delay and hesitation near 0 mph. This car's
+transmission software reads U834 (`7E1 22 F189`); whether a newer version exists for a 2020 car is unknown.
 
 ## Open questions
 
