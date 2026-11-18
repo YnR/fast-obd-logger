@@ -311,8 +311,13 @@ transmission software reads U834 (`7E1 22 F189`); whether a newer version exists
   5 s before either. The phone shows no sudden change before the lift, only the gentle coasting decel after.
   Open: did the foot lift on purpose (then the felt event is the tip-out, the drive line going from pull to
   coast), or was the lift a reaction to something felt?
-- Mark 3 (938.6 s, 23 mph): during a 4th to 5th upshift with the pedal steady at about 33% (gear 4 at 938.0 s,
-  5 at 939.6 s), engine 1342 to 1240 rpm. Same pattern as the shift-linked marks on 11-16 and 11-17.
+- Mark 3 (938.6 s, 23 mph), the clearest and strongest symptom so far (owner, 2026-11-18): pedal steady at
+  33%, 4th gear with the converter unlocked (slip about 144 rpm, engine about 1400 rpm). By the next
+  transmission reading at 938.63 (2.0 s later) it was in 5th with the converter locked (slip 28): the 4-5
+  upshift and the converter lock happened together, at low engine speed, inside one gap between transmission
+  readings, so the target-gear change was never seen. Engine 1404 to 1342 to 1240 rpm, actual torque 46 to
+  42% while commanded throttle rose 18 to 19% (shift torque cut). Speed kept rising. The mark came right at
+  the first 5th-gear reading. Same family as the shift- and lock-linked marks on 11-16 and 11-17.
 - Sample rate fell during the drive: engine group every 0.27-0.30 s until about 650 s, then 0.44-0.79 s to the
   end with replies still complete. Not the background sweep (no burst then). Cause unknown (phone throttling?).
 - Background sweep: 8 pauses (1.0-10.4 s), 131 IDs, all ended as designed.
