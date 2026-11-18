@@ -154,12 +154,15 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
-- Background sweep (build 2026-11-17-c): in Monitor mode, once parked 20 s (speed 0, lever P or N, engine
-  running), the app asks the other computers for data IDs in bursts of at most 2.5 s, then goes back to
-  monitoring. Order: 7D1 (likely ABS/ESC) and 737 (radar cruise) first, then the rest of FS_OTHERS. Pass 1
-  covers 0100-01FF, B000-B1FF, C000-C1FF, D000-D1FF, E000-E1FF of every computer; pass 2 the rest
-  (F180-F1FF identification skipped, already done). Progress in localStorage `obd_bg_sweep`; finds saved as
-  obd_bgsweep_*.txt when the log is saved. A burst in progress can finish up to 2.5 s after leaving P.
+- Background sweep (build 2026-11-17-d): in Monitor mode, whenever the car is stopped for 1 s (speed 0,
+  engine running, pedal D at or under 16.5%) and either in P/N or in D/M with the brake on (TCM byte 25),
+  the app asks the other computers for data IDs. Between every request in D (every 4th in P/N) it reads
+  `01 49 0D` from the engine and hands back to monitoring as soon as the pedal moves or speed is above 0
+  (simulated: under 0.1 s). Bursts last at most 10 s in D, 2.5 s in P/N, then one monitor cycle. Each burst
+  leaves an `E` row `sweep` in the drive log saying how long monitoring paused. Order: 7D1 (likely ABS/ESC)
+  and 737 (radar cruise), then the rest of FS_OTHERS; pass 1 = 0100-01FF, B000-B1FF, C000-C1FF, D000-D1FF,
+  E000-E1FF of every computer, pass 2 = the rest. Progress in localStorage `obd_bg_sweep`; finds saved in
+  their own file obd_bgsweep_*.txt, never in the drive CSV.
 
 - Sweep runs only while the engine is running (RPM above 400, checked about once a second), unless the
   user unticks that option. Reason: an hour-long sweep with only the ignition on would drain the 12 V battery.

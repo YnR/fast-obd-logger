@@ -161,7 +161,7 @@
     <pre id="fsOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:200px;overflow:auto"></pre>
   </div>
   <div class="card" id="bgCard">
-    <b>Background sweep: other computers</b> <small>while Monitor mode runs and the car is parked (P or N, engine running, 20 s), the app asks the other computers for a few data IDs at a time, then goes back to monitoring. Order: ABS/stability (7D1), radar cruise (737), then the rest. Nothing happens while driving. Anything found is saved to a file when the log is saved.</small>
+    <b>Background sweep: other computers</b> <small>while Monitor mode runs and the car is stopped (in P or N, or in D with the brake on at a light, foot off the accelerator), the app asks the other computers for data IDs, then goes back to monitoring the moment you press the accelerator or the car rolls. Order: ABS/stability (7D1), radar cruise (737), then the rest. Finds go in their own file (obd_bgsweep_...), separate from the drive log.</small>
     <label style="display:block;margin-top:8px"><input type="checkbox" id="bgOn" checked> Background sweep on</label>
     <div id="bgStat" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
     <div class="row" style="margin-top:8px"><button id="bgSave">Save background sweep file for Claude</button></div>
@@ -259,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-17-c · background sweep of other computers</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-17-d · background sweep at red lights</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -877,15 +877,18 @@ async function readTcm(){
   await send('ATSH 7E0'); await send('ATCRA 7E8');
   return u.kind==='ok' ? decodeTcm(u.data) : null;
 }
-// ---- Background sweep: other computers, a few IDs at a time while parked in Monitor mode ----
-// Runs only with the engine running, speed 0 and the lever in P or N (from the transmission block), after
-// 20 s parked, in bursts of at most 2.5 s between monitor cycles. Read-only: service 22 only.
+// ---- Background sweep: other computers, a few IDs at a time while the car is stopped in Monitor mode ----
+// Runs with the engine running and speed 0, pedal at rest, either parked (P or N) or stopped in D with the
+// brake on (a red light), after 1 s. Between every request in D (every 4th in P/N) it reads pedal and speed
+// from the engine and hands back to monitoring the moment the pedal moves or the car starts to roll.
+// Read-only: service 22 to the other computers, 01 to the engine. Its finds go to a separate file.
 // Order: computers that could cut engine power first (7D1 likely ABS/ESC, 737 radar cruise), then the rest.
 // Pass 1 checks the likely data ranges of every computer; pass 2 fills in the rest of each one.
 const BG_KEY='obd_bg_sweep';
 const bgOrder=()=>['7D1','737'].concat(FS_OTHERS.filter(m=>m!=='7D1'&&m!=='737'));
 const BG_P1=[[0x0100,0x01FF],[0xB000,0xB1FF],[0xC000,0xC1FF],[0xD000,0xD1FF],[0xE000,0xE1FF]];
 const BG_P2=[[0x0000,0x00FF],[0x0200,0xAFFF],[0xB200,0xBFFF],[0xC200,0xCFFF],[0xD200,0xDFFF],[0xE200,0xF17F],[0xF200,0xFFFF]];
+const BG_PED_REST=16.5;   // pedal sensor D reads 14.9% with the foot off
 function bgPlan(){ const p=[];
   bgOrder().forEach(m=>BG_P1.forEach(([a,b])=>p.push({tx:m,from:a,to:b})));
   bgOrder().forEach(m=>BG_P2.forEach(([a,b])=>p.push({tx:m,from:a,to:b})));
@@ -893,32 +896,54 @@ function bgPlan(){ const p=[];
 function bgLoad(){ let st=null; try{ st=JSON.parse(localStorage.getItem(BG_KEY)||'null'); }catch(e){}
   return st&&st.plan ? st : {plan:bgPlan(),i:0,did:null,miss:0,found:[],done:false}; }
 function bgStore(st){ st.saved=Date.now(); try{ localStorage.setItem(BG_KEY, JSON.stringify(st)); }catch(e){} }
-let bgParkedSince=0, bgNewFinds=0;
-function bgReady(){
-  if(!$('bgOn').checked || !tcmLatest) return false;
-  const parked = latest['0D']===0 && latest['0C']>=400 && (tcmLatest.tcm_lever==='P'||tcmLatest.tcm_lever==='N');
-  if(!parked){ bgParkedSince=0; return false; }
-  if(!bgParkedSince) bgParkedSince=performance.now();
-  return performance.now()-bgParkedSince>=(window.__bgWait||20000);
+let bgStoppedSince=0, bgNewFinds=0;
+function bgWhere(){   // '' = not stopped, 'P' = parked in P or N, 'D' = stopped in gear with the brake on
+  if(!$('bgOn').checked || !tcmLatest) return '';
+  if(!(latest['0D']===0 && latest['0C']>=400 && latest['49']!=null && latest['49']<=BG_PED_REST)) return '';
+  const lv=tcmLatest.tcm_lever;
+  if(lv==='P'||lv==='N') return 'P';
+  if((lv==='D'||lv==='M') && tcmLatest.tcm_brake===1) return 'D';
+  return '';
 }
-async function bgBurst(){
+function bgReady(){
+  const w=bgWhere(); if(!w){ bgStoppedSince=0; return ''; }
+  if(!bgStoppedSince) bgStoppedSince=performance.now();
+  return performance.now()-bgStoppedSince>=(window.__bgWait||1000) ? w : '';
+}
+async function bgStillStopped(){   // pedal and speed from the engine computer
+  await send('ATSH 7E0'); await send('ATCRA 7E8');
+  const r=String(await send('01490D',600)).replace(/\s/g,'').toUpperCase(), m=r.match(/4149([0-9A-F]{2})0D([0-9A-F]{2})/);
+  if(!m) return false;
+  const ped=parseInt(m[1],16)*100/255, spd=parseInt(m[2],16);
+  return spd===0 && ped<=BG_PED_REST;
+}
+async function bgBurst(where){
   const st=bgLoad(); if(st.done) return;
-  const end=performance.now()+(window.__bgBudget||2500); let tx=null;
+  const t0b=performance.now(), end=t0b+(where==='D'?(window.__bgBudgetD||10000):(window.__bgBudget||2500));
+  let tx=null, n=0, why='time';
   try{
     while(running && performance.now()<end && st.i<st.plan.length){
+      if(n>0 && (where==='D' || n%4===0)){ tx=null; if(!(await bgStillStopped())){ why='go'; break; } }
       const r=st.plan[st.i]; if(st.did==null){ st.did=r.from; st.miss=0; }
       if(tx!==r.tx){ await setTarget(r.tx); tx=r.tx; }
       const raw='22'+fsH4(st.did);
-      let u=parseUds(await send(raw,700));
-      if(u.kind==='neg' && u.nrc===0x78) u=parseUds(await send(raw,3000));
+      let u=parseUds(await send(raw,700)); n++;
+      if(u.kind==='neg' && u.nrc===0x78 && where==='P') u=parseUds(await send(raw,3000));
       if(u.kind==='ok'){ st.miss=0; st.found.push({tx:r.tx,raw:raw,hex:hexStr(u.all)}); bgNewFinds++; log('Background sweep found '+r.tx+' '+raw); }
       else if(u.kind==='neg'||u.kind==='other') st.miss=0;
       else st.miss++;
       if(st.miss>=25){ log('Background sweep: '+r.tx+' silent, skipping '+fsH4(st.did)+'-'+fsH4(r.to)); st.did=r.to; }
       st.did++;
       if(st.did>r.to){ st.i++; st.did=null; st.miss=0; if(st.i>=st.plan.length) st.done=true; }
+      if(n%16===0){ bgStore(st); bgShow(st); }
     }
-  }finally{ if(tx){ await send('ATSH 7E0'); await send('ATCRA 7E8'); } bgStore(st); bgShow(st); }
+  }finally{
+    if(tx!==null||why!=='go'){ await send('ATSH 7E0'); await send('ATCRA 7E8'); }
+    bgStore(st); bgShow(st);
+    if(why==='go') bgStoppedSince=0;
+    // one row in the monitor log so the gap is explained (no beep)
+    addRow('E',{}, {}, {event:'sweep', event_info:'monitor paused '+((performance.now()-t0b)/1000).toFixed(1)+' s for background sweep ('+(where==='D'?'stopped in gear; brake on':'parked')+'; '+n+' IDs; ended: '+(why==='go'?'pedal or rolling':'time')+')'});
+  }
 }
 function bgShow(st){ st=st||bgLoad(); const total=st.plan.reduce((a,r)=>a+r.to-r.from+1,0);
   let d=0; for(let j=0;j<st.i&&j<st.plan.length;j++) d+=st.plan[j].to-st.plan[j].from+1;
@@ -959,7 +984,7 @@ async function startLogging(){
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
       if(tcmOn && running && (cyc++%2===0)){ const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); }
-        if(running && bgReady()){ await bgBurst(); lastGood=performance.now(); } }
+        if(running){ const bw=bgReady(); if(bw){ await bgBurst(bw); lastGood=performance.now(); } } }
     }
   }catch(e){ log('Loop error: '+e.message); }
   running=false; $('modeSel').disabled=false; $('btnStart').textContent='Start logging'; $('btnStart').className='go';
