@@ -303,6 +303,31 @@ Public bulletin found: Kia TSB TRA095 "3.3L GDI 8AT TCU gear shift logic improve
 covers 2019MY cars built 24 Jan to 24 Sep 2018 with acceleration delay and hesitation near 0 mph. This car's
 transmission software reads U834 (`7E1 22 F189`); whether a newer version exists for a 2020 car is unknown.
 
+## Monitor drive 2026-11-18 08:08 (17 min, three marks; build 2026-11-17-d)
+
+- Marks 1 (282.5 s, 36 mph, 7th) and 2 (610.2 s, 48 mph, 8th): each 0.7-1.2 s after the accelerator went
+  fully to rest (both sensors 31% to 14.9% within one sample) and stayed there; torque fell from about 41%
+  to 0 within a second, converter slip jumped to about +200 rpm then went negative (coasting). No shift in the
+  5 s before either. The phone shows no sudden change before the lift, only the gentle coasting decel after.
+  Open: did the foot lift on purpose (then the felt event is the tip-out, the drive line going from pull to
+  coast), or was the lift a reaction to something felt?
+- Mark 3 (938.6 s, 23 mph): during a 4th to 5th upshift with the pedal steady at about 33% (gear 4 at 938.0 s,
+  5 at 939.6 s), engine 1342 to 1240 rpm. Same pattern as the shift-linked marks on 11-16 and 11-17.
+- Sample rate fell during the drive: engine group every 0.27-0.30 s until about 650 s, then 0.44-0.79 s to the
+  end with replies still complete. Not the background sweep (no burst then). Cause unknown (phone throttling?).
+- Background sweep: 8 pauses (1.0-10.4 s), 131 IDs, all ended as designed.
+
+## Other computers: background sweep finds
+
+| Module | ID | Reply (after 62 + ID) | Notes |
+|---|---|---|---|
+| 7D1 (likely ABS/ESC) | 0100 | `0C` | 1 byte |
+| 7D1 | 0101 | `FF` | 1 byte |
+| 7D1 | 0102 | `00` | 1 byte |
+| 7D1 | 0104 | 41 bytes `FB C7 FF E0 12 00 00 00 01 E4 FF 00 ...` | live block candidate (one sample, parked) |
+
+7D1 0103 does not answer. 0105-0182 not yet swept.
+
 ## Open questions
 
 1. What happens at the moment of the hesitation? Needs a Monitor drive or "Catch the hesitation" with a tap
