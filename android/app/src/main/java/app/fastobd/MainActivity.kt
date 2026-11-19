@@ -141,6 +141,15 @@ class MainActivity : Activity() {
             }
         }
 
+        // Phone plugged in (car USB powered): the background sweep may run with the engine off.
+        @JavascriptInterface
+        fun isCharging(): Boolean {
+            return try {
+                val i = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                (i?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+            } catch (e: Exception) { false }
+        }
+
         @JavascriptInterface
         fun setIdle(on: Boolean) {
             try { startService(Intent(this@MainActivity, KeepAliveService::class.java).putExtra("idle", on)) } catch (e: Exception) { }

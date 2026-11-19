@@ -154,6 +154,14 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
+- Build 2026-11-19-a: Sweep mode removed (tabs: Monitor, Identify). The background-sweep card moved to the
+  Monitor page and the "other tools" card to Identify. The background sweep now also runs with the engine off
+  when the ignition is on and the phone is plugged in (new native AndroidBT.isCharging): within the first
+  minutes inside the monitor loop, and after the 5-minute battery-saver point in the auto loop (bursts of up
+  to 10 s, checking pedal, speed and engine speed every 4 IDs; monitoring starts within about 1 s of the engine
+  starting, simulated). Not charging and engine off: no sweep, battery saver as before. Monitoring itself is
+  unchanged.
+
 - Build 2026-11-18-b, converter lock-up watch (Monitor):
   - While in D, rolling, foot on and converter slip 40+ rpm (and for 1.5 s after a lock-up) the transmission
     block is read up to 4 times in a row without switching addresses, then one engine read. Simulated: about

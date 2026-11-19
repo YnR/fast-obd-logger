@@ -72,8 +72,7 @@
 <div id="top">
   <div id="tabs">
     <button class="tab" data-mode="monitor">1 · Monitor</button>
-    <button class="tab" data-mode="sweep">2 · Sweep</button>
-    <button class="tab" data-mode="identify">3 · Identify</button>
+    <button class="tab" data-mode="identify">2 · Identify</button>
   </div>
   <div id="updBar" style="display:none"></div>
   <div id="status">Not connected.</div>
@@ -135,6 +134,12 @@
       </select>
     </details>
   </div>
+  <div class="card" id="bgCard">
+    <b>Background sweep: other computers</b> <small>while Monitor mode runs and the car is stopped (in P or N, or in D with the brake on at a light, foot off the accelerator), and also with the engine off while the ignition is on and the phone is charging, the app asks the other computers for data IDs, then goes back to monitoring the moment you press the accelerator or the car rolls. Order: ABS/stability (7D1), radar cruise (737), then the rest. Finds go in their own file (obd_bgsweep_...), separate from the drive log. Progress is kept on this phone; nothing already asked is asked again.</small>
+    <label style="display:block;margin-top:8px"><input type="checkbox" id="bgOn" checked> Background sweep on</label>
+    <div id="bgStat" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
+    <div class="row" style="margin-top:8px"><button id="bgSave">Save background sweep file for Claude</button></div>
+  </div>
 </div>
 
 <!-- ================= Mode 2: Exploratory sweep ================= -->
@@ -161,12 +166,21 @@
     </details>
     <pre id="fsOut" class="noswipe" style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:var(--mut);max-height:200px;overflow:auto"></pre>
   </div>
-  <div class="card" id="bgCard">
-    <b>Background sweep: other computers</b> <small>while Monitor mode runs and the car is stopped (in P or N, or in D with the brake on at a light, foot off the accelerator), the app asks the other computers for data IDs, then goes back to monitoring the moment you press the accelerator or the car rolls. Order: ABS/stability (7D1), radar cruise (737), then the rest. Finds go in their own file (obd_bgsweep_...), separate from the drive log.</small>
-    <label style="display:block;margin-top:8px"><input type="checkbox" id="bgOn" checked> Background sweep on</label>
-    <div id="bgStat" style="color:var(--mut);font-size:13px;margin-top:6px"></div>
-    <div class="row" style="margin-top:8px"><button id="bgSave">Save background sweep file for Claude</button></div>
+</div>
+
+<!-- ================= Mode 3: Identify ================= -->
+<div class="page" id="pgIdentify" style="display:none">
+  <div class="card">
+    <b>Identify what is what</b> <small>each tile is one short test. It records the data blocks while you do one thing at a time, then saves a file for Claude to compare. Parked tests start as soon as you tap them. Driving tests show the whole plan first, then talk you through it so you never have to read while moving.</small>
+    <div id="tiles"></div>
   </div>
+  <div class="card" id="planCard" style="display:none">
+    <b id="planTitle"></b>
+    <p><small>Read this now, while stopped. Once you start, the phone speaks each cue and you only ever tap anywhere on the screen.</small></p>
+    <ol id="planList"></ol>
+    <div class="row"><button id="planGo" class="go">I have read it. Start</button><button id="planCancel">Cancel</button></div>
+  </div>
+  <div class="card"><small>Live raw blocks during a test:</small><div id="exGrid" class="grid"></div></div>
   <div class="card" id="exploreCard">
     <details>
       <summary>Other tools (parked): request list, range scan, single request</summary>
@@ -221,21 +235,6 @@
   </div>
 </div>
 
-<!-- ================= Mode 3: Identify ================= -->
-<div class="page" id="pgIdentify" style="display:none">
-  <div class="card">
-    <b>Identify what is what</b> <small>each tile is one short test. It records the data blocks while you do one thing at a time, then saves a file for Claude to compare. Parked tests start as soon as you tap them. Driving tests show the whole plan first, then talk you through it so you never have to read while moving.</small>
-    <div id="tiles"></div>
-  </div>
-  <div class="card" id="planCard" style="display:none">
-    <b id="planTitle"></b>
-    <p><small>Read this now, while stopped. Once you start, the phone speaks each cue and you only ever tap anywhere on the screen.</small></p>
-    <ol id="planList"></ol>
-    <div class="row"><button id="planGo" class="go">I have read it. Start</button><button id="planCancel">Cancel</button></div>
-  </div>
-  <div class="card"><small>Live raw blocks during a test:</small><div id="exGrid" class="grid"></div></div>
-</div>
-
 <!-- ================= Shared ================= -->
 <div class="card">
   <div class="row">
@@ -260,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-18-c · converter lock-up watch</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-19-a · Sweep mode removed; sweep while charging</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -652,7 +651,13 @@ async function autoLoop(){
       if(engineIdle() && !gT){
         const rpm=await readRpm().catch(()=>null);
         if(rpm==null){ carUp=false; continue; }
-        if(rpm<400){ goSleep(); setStatus('Ignition on, engine off. Battery saver: checking every 15 s.'); await nap(IDLE_CHECK); continue; }
+        if(rpm<400){
+          // Engine off but the phone is charging (ignition on): sweep the other computers instead of sleeping.
+          if($('bgOn').checked && phoneCharging() && !bgLoad().done){
+            if(asleep) wake('sweep while charging');
+            setStatus('Ignition on, engine off, phone charging: sweeping the other computers. Monitoring starts when the engine runs.');
+            latest['0D']=0; await bgBurst('P', true); await sleepMs(300); continue; }
+          goSleep(); setStatus('Ignition on, engine off. Battery saver: checking every 15 s.'); await nap(IDLE_CHECK); continue; }
         noteEngine(true);
       }
       const m=MODE();
@@ -974,9 +979,13 @@ function bgLoad(){ let st=null; try{ st=JSON.parse(localStorage.getItem(BG_KEY)|
   return st&&st.plan ? st : {plan:bgPlan(),i:0,did:null,miss:0,found:[],done:false}; }
 function bgStore(st){ st.saved=Date.now(); try{ localStorage.setItem(BG_KEY, JSON.stringify(st)); }catch(e){} }
 let bgStoppedSince=0, bgNewFinds=0;
-function bgWhere(){   // '' = not stopped, 'P' = parked in P or N, 'D' = stopped in gear with the brake on
-  if(!$('bgOn').checked || !tcmLatest) return '';
-  if(!(latest['0D']===0 && latest['0C']>=400 && latest['49']!=null && latest['49']<=BG_PED_REST)) return '';
+// Phone plugged in? (car USB power, so the ignition is on). Older app versions without isCharging: false.
+function phoneCharging(){ try{ return !!(window.AndroidBT && AndroidBT.isCharging && AndroidBT.isCharging()); }catch(e){ return false; } }
+function bgWhere(){   // '' = not stopped, 'P' = parked in P or N (or engine off), 'D' = stopped in gear with the brake on
+  if(!$('bgOn').checked) return '';
+  if(!(latest['0D']===0 && latest['49']!=null && latest['49']<=BG_PED_REST)) return '';
+  if(!(latest['0C']>=400)) return phoneCharging() ? 'P' : '';   // engine off: only while the phone charges
+  if(!tcmLatest) return '';
   const lv=tcmLatest.tcm_lever;
   if(lv==='P'||lv==='N') return 'P';
   if((lv==='D'||lv==='M') && tcmLatest.tcm_brake===1) return 'D';
@@ -987,20 +996,21 @@ function bgReady(){
   if(!bgStoppedSince) bgStoppedSince=performance.now();
   return performance.now()-bgStoppedSince>=(window.__bgWait||1000) ? w : '';
 }
-async function bgStillStopped(){   // pedal and speed from the engine computer
+async function bgStillStopped(engineOff){   // pedal and speed (and engine speed) from the engine computer
   await send('ATSH 7E0'); await send('ATCRA 7E8');
-  const r=String(await send('01490D',600)).replace(/\s/g,'').toUpperCase(), m=r.match(/4149([0-9A-F]{2})0D([0-9A-F]{2})/);
+  const r=String(await send(engineOff?'01490D0C':'01490D',600)).replace(/\s/g,'').toUpperCase(), m=r.match(/4149([0-9A-F]{2})0D([0-9A-F]{2})/);
   if(!m) return false;
+  if(engineOff){ const e=r.match(/0C([0-9A-F]{2})([0-9A-F]{2})/); if(e && (parseInt(e[1],16)*256+parseInt(e[2],16))/4>=400) return false; }   // engine started: monitor
   const ped=parseInt(m[1],16)*100/255, spd=parseInt(m[2],16);
   return spd===0 && ped<=BG_PED_REST;
 }
-async function bgBurst(where){
+async function bgBurst(where, standalone){   // standalone: called from the auto loop with the engine off (no log)
   const st=bgLoad(); if(st.done) return;
-  const t0b=performance.now(), end=t0b+(where==='D'?(window.__bgBudgetD||10000):(window.__bgBudget||2500));
+  const t0b=performance.now(), end=t0b+(standalone?(window.__bgBudgetOff||10000):where==='D'?(window.__bgBudgetD||10000):(window.__bgBudget||2500));
   let tx=null, n=0, why='time';
   try{
-    while(running && performance.now()<end && st.i<st.plan.length){
-      if(n>0 && (where==='D' || n%4===0)){ tx=null; if(!(await bgStillStopped())){ why='go'; break; } }
+    while((standalone?connected:running) && performance.now()<end && st.i<st.plan.length){
+      if(n>0 && (where==='D' || n%4===0)){ tx=null; if(!(await bgStillStopped(standalone||!(latest['0C']>=400)))){ why='go'; break; } }
       const r=st.plan[st.i]; if(st.did==null){ st.did=r.from; st.miss=0; }
       if(tx!==r.tx){ await setTarget(r.tx); tx=r.tx; }
       const raw='22'+fsH4(st.did);
@@ -1019,7 +1029,7 @@ async function bgBurst(where){
     bgStore(st); bgShow(st);
     if(why==='go') bgStoppedSince=0;
     // one row in the monitor log so the gap is explained (no beep)
-    addRow('E',{}, {}, {event:'sweep', event_info:'monitor paused '+((performance.now()-t0b)/1000).toFixed(1)+' s for background sweep ('+(where==='D'?'stopped in gear; brake on':'parked')+'; '+n+' IDs; ended: '+(why==='go'?'pedal or rolling':'time')+')'});
+    if(!standalone) addRow('E',{}, {}, {event:'sweep', event_info:'monitor paused '+((performance.now()-t0b)/1000).toFixed(1)+' s for background sweep ('+(where==='D'?'stopped in gear; brake on':'parked')+'; '+n+' IDs; ended: '+(why==='go'?'pedal or rolling':'time')+')'});
   }
 }
 function bgShow(st){ st=st||bgLoad(); const total=st.plan.reduce((a,r)=>a+r.to-r.from+1,0);
@@ -1637,8 +1647,10 @@ async function checkUpdate(){
 }
 setTimeout(checkUpdate,3000); setInterval(checkUpdate,3*3600*1000);
 
-// ---- three modes, tabs and swipe ----
-const MODES=['monitor','sweep','identify'], MODE_SEL={monitor:'normal',sweep:'scan',identify:'explore'}, PAGES={monitor:'pgMonitor',sweep:'pgSweep',identify:'pgIdentify'};
+// ---- two modes (Monitor, Identify), tabs and swipe ----
+// Sweep mode was removed on 2026-11-19: Monitor sweeps the other computers whenever the car is stopped. Its page
+// stays in the file, hidden, because shared code still refers to its elements.
+const MODES=['monitor','identify'], MODE_SEL={monitor:'normal',identify:'explore'}, PAGES={monitor:'pgMonitor',identify:'pgIdentify'};
 let uiMode='';
 function setMode(m){
   if(!PAGES[m]) m='monitor';
@@ -1646,12 +1658,13 @@ function setMode(m){
   if(m===uiMode) return;
   uiMode=m; $('modeSel').value=MODE_SEL[m];
   for(const k of MODES) $(PAGES[k]).style.display=(k===m)?'':'none';
+  $('pgSweep').style.display='none';
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.mode===m));
   $('markBar').style.display=(m==='monitor')?'':'none';
   $('planCard').style.display='none';
   try{ localStorage.setItem('obd_mode',m); }catch(e){}
   if(m!=='monitor' && running && !exOnly){ logEndWhy='mode'; running=false; }
-  if(m!=='sweep'){ fsActive=false; scanning=false; }
+  fsActive=false; scanning=false;
   if(m==='identify') renderTiles();
   autoPause=false;
   fsRefresh(); window.scrollTo(0,0);
