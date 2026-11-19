@@ -329,6 +329,31 @@ transmission software reads U834 (`7E1 22 F189`); whether a newer version exists
   end with replies still complete. Not the background sweep (no burst then). Cause unknown (phone throttling?).
 - Background sweep: 8 pauses (1.0-10.4 s), 131 IDs, all ended as designed.
 
+## Monitor drive 2026-11-18 17:29 (11 min, three marks; phone still on build 2026-11-17-d)
+
+Sampling very slow for most of the drive (median 0.75 s per request against 0.14 s normally, from about 60 s
+in; replies complete). Not lined up with the sweep pauses. Cause still unknown.
+
+- Mark 1 (46.8 s, 36 mph, 7th): pedal to rest at 45.97 and back at 46.69 (blip); converter went from about
+  250 rpm slip to locked (58, then 1) between 45.75 and 46.93. A jolt was flagged at 44.4 during a tip-in.
+- Mark 2 (68.2 s, 25 mph): tip-in after coasting, downshifts 7>6 (63.8, converter unlocked) then 5>4 requested
+  at 67.4; mark 0.8 s later. Data too sparse (readings 1+ s apart) to say more.
+- Mark 3 (484.6 s, 33 mph, 4th, pedal steady 33-36%, 2000 rpm): converter locked at 483.6-483.9 (slip 90 to
+  -7.5, engine 2081 to 1982 rpm); mark 0.7 s later. No shift in the 6 s before.
+
+## Converter lock-up versus marks, three drives (2026-11-17 16:50, 11-18 08:08, 11-18 17:29)
+
+Lock-up counted when slip went from 60+ rpm to within 20 rpm in one transmission reading, same gear, lever D,
+pedal above 18% around it. 17 such lock-ups; 7 were followed by a mark within 0.7-2.1 s, and 7 of the 9 marks
+follow one (11-17 marks 1-3, 11-18 morning marks 1-3 via the lock at 280.6/608.4 and the 4-5 shift with lock,
+11-18 evening mark 3). This reframes the 11-18 morning marks 1 and 2: the converter locked about 0.6-1 s
+before the foot came off, so the lift may have been a reaction. Felt and unfelt lock-ups do not separate by
+gear, rpm, pedal or slip before (at this sample rate).
+
+Working hypothesis: the felt event is the torque converter clutch applying (harshly, some of the time), alone
+or together with a shift. Next: a drive on build 2026-11-18-a (transmission every cycle) to see how fast the
+slip falls at felt versus unfelt lock-ups.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
