@@ -379,7 +379,14 @@ slip falls at felt versus unfelt lock-ups.
 | 7D1 | 0102 | `00` | 1 byte |
 | 7D1 | 0104 | 41 bytes `FB C7 FF E0 12 00 00 00 01 E4 FF 00 ...` | live block candidate (one sample, parked) |
 
-7D1 0103 does not answer. 0105-0182 not yet swept.
+7D1 0103 does not answer; nothing else in 0100-01FF answers. B000-B00B: nothing (sweep at B00C on 2026-11-18 17:34).
+7D1 0104 second sample (2026-11-18 evening, also stopped) differs from the first in bytes 5-6, 10, 26-27,
+29-30, 32, 36-37 (counted after 62 01 04): it is live data. Bytes 26-27 and 29-30 look like signed 16-bit
+values near zero (for example 0x0343/0x06A8 and 0xFFF6/0x0001): candidates for yaw rate, lateral acceleration
+or steering angle. Needs readings while moving to decode.
+
+2026-11-18 17:50: the old build (2026-11-17-d) restarted the finished transmission sweep when Start was tapped
+in Sweep mode (it had reached 7E1 CED0 again, nothing new). Build 2026-11-18-c marks that repeat as finished.
 
 ## Open questions
 

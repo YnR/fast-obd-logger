@@ -260,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-18-b · converter lock-up watch</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-18-c · converter lock-up watch</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -1438,6 +1438,17 @@ let fsCur=null;
   localStorage.setItem(FS_KEY, JSON.stringify(st));
 }catch(e){} })();
 let fsSaveKey=FS_KEY;
+// 2026-11-18: on build 2026-11-17-d, Start in Sweep mode after the transmission sweep had finished began the same
+// plan again (7E1 B100-BFFF, C100-CFFF, F200-FFFF, all done on 2026-11-17). Mark such a repeat as finished, keeping
+// the one find of the first run, so Start goes on to the other computers instead.
+(function(){ try{
+  const st=fsLoad(); if(!st||st.done||!st.plan) return;
+  const same=st.plan.length===3 && st.plan.every((r,j)=>r.tx==='7E1' && r.from===[0xB100,0xC100,0xF200][j] && r.to===[0xBFFF,0xCFFF,0xFFFF][j]);
+  if(!same) return;
+  st.done=true; st.i=st.plan.length; st.did=null; st.repeatStopped=true;
+  if(!st.found.some(f=>f.raw==='22F806')) st.found.push({tx:'7E1',raw:'22F806',hex:'62F8061CA23DE4'});
+  localStorage.setItem(FS_KEY, JSON.stringify(st));
+}catch(e){} })();
 function fsSave(st){
   if(!st) return true;
   st.saved=Date.now();
