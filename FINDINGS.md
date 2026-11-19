@@ -154,6 +154,22 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
+- Build 2026-11-18-b, converter lock-up watch (Monitor):
+  - While in D, rolling, foot on and converter slip 40+ rpm (and for 1.5 s after a lock-up) the transmission
+    block is read up to 4 times in a row without switching addresses, then one engine read. Simulated: about
+    4 transmission reads per engine read while unlocked, 1:1 when locked. Expect roughly 5/s transmission and
+    1.3/s pedal while unlocked on the car.
+  - New column tcm_engine_rpm (01A0 bytes 5-6 /4), so engine speed comes with every transmission reading.
+  - Event `lock` (no beep): slip 60+ to within 20 rpm in one reading, same gear, D. Info: slip before and after,
+    time between the two readings, engine rpm before/after, pedal range, and a phone score 1.2 s later:
+    "decel dip" = how far the forward push fell below its level in the 1.5 s before (m/s²), when, and peak jerk.
+    The tile shows the count and the hardest dip of the drive.
+  - Group `A` rows: every phone motion sample (about 50 Hz) from 1.5 s before to 1 s after each lock-up and
+    from 4 s before to 1 s after each mark; columns phone_ax/ay/az, acc_fwd (+ = speeding up, along the learnt
+    forward axis) and acc_horiz. Written about a second late, so sort by t_s.
+  - Sweep mode: plan box default "other computers" continues the shared background-sweep progress
+    (obd_bg_sweep), so nothing already asked is asked again. A typed plan still runs as before.
+
 - Build 2026-11-18-a: transmission block read every cycle (was every other). Expected on the car from the
   11-17 timings (engine group about 0.14 s, transmission read about 0.26 s with the address switches): both
   about 2.5 readings/s, against engine 3.65 and transmission 1.83 before. Clutch-slip detector now needs two

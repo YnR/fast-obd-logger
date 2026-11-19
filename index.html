@@ -105,7 +105,8 @@
       <button id="btnRecover">Recover last</button>
     </div>
     <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
-    <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b> · pedal blip <b id="ev_blip">0</b> · coasting <b id="ev_coast">0</b></small></p>
+    <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b> · pedal blip <b id="ev_blip">0</b> · coasting <b id="ev_coast">0</b> · converter lock-up <b id="ev_lock">0</b> (hardest <b id="lockWorst">0</b> m/s²)</small></p>
+    <label style="display:block"><input type="checkbox" id="lockFocus" checked> <small>Lock-up watch: read the transmission several times in a row while the converter is unlocked</small></label>
     <div id="tcmGrid" class="grid" style="margin-bottom:8px">
       <div class="cell"><span>lever</span><b id="tLever">–</b></div>
       <div class="cell"><span>gear</span><b id="tGear">–</b></div>
@@ -259,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-18-a · transmission read every cycle</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-18-b · converter lock-up watch</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -386,7 +387,13 @@ const SERVICES = [0xfff0,0xffe0,0x18f0,0xfff1,0xae00,0xffb0,0xffc0,0xffd0,0xffe5
   '0000fff0-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb'];
 let device=null, server=null, wChar=null, nChar=null;
 let rxBuf='', pending=null, running=false, connected=false;
-function motionH(ev){ const a=ev.accelerationIncludingGravity; if(a){ lastAcc={x:+(a.x||0).toFixed(2),y:+(a.y||0).toFixed(2),z:+(a.z||0).toFixed(2)}; joltFeed(+a.x||0,+a.y||0,+a.z||0); } }
+// Every phone motion sample of the last 6 s is kept, so the moments around a converter lock-up or a mark can
+// be written to the log at full rate (group A rows) and scored for how hard the car decelerated.
+const accBuf=[];
+function motionH(ev){ const a=ev.accelerationIncludingGravity; if(a){ const x=+a.x||0,y=+a.y||0,z=+a.z||0, now=performance.now();
+  lastAcc={x:+x.toFixed(2),y:+y.toFixed(2),z:+z.toFixed(2)};
+  accBuf.push({t:now,x,y,z}); while(accBuf.length && accBuf[0].t<now-6000) accBuf.shift();
+  joltFeed(x,y,z); } }
 function motionOn(){ if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',motionH); } }
 function motionOff(){ if(window.__motionOn){ window.__motionOn=false; window.removeEventListener('devicemotion',motionH); } }
 let rows=[], latest={}, prevPed=null, dips=0, hist=[], lastGeo={}, lastAcc={}, wakeLock=null, t0=0, geoId=null;
@@ -655,7 +662,7 @@ async function autoLoop(){
         await endSession(connected?'logging stopped':'dongle disconnected');
         if(logEndWhy==='silent'||!connected){ carUp=false; noteEngine(false); }
         if(!autoPause) await sleepMs(1500);
-      } else if(m==='scan' && !fsUserPaused && !scanning && !(fsLoad()&&fsLoad().done)){
+      } else if(m==='scan' && !fsUserPaused && !scanning && fsWorkLeft()){
         const why=await fullScan();
         if(why==='caroff'){ carUp=false; lastCarSeen=Date.now(); noteEngine(false); setStatus('Car is off. The sweep continues when the engine is running again.'); await sleepMs(4000); }
         else await sleepMs(1500);
@@ -738,6 +745,8 @@ async function probe(){
 $('probeGo').onclick=probe;
 
 // ---- logging loop ----
+// group A rows: phone motion at full rate around lock-ups and marks (acc_fwd = along the learnt forward axis,
+// + = speeding up; acc_horiz = whole horizontal push). They are written a second or so late, so sort by t_s.
 const HEADER=['t_s','epoch_ms','group',...ORDER.map(p=>PIDS[p].name),'auto_dip','mark','gps_lat','gps_lon','gps_mph','phone_ax','phone_ay','phone_az'];
 let curStep='';
 let extraCols=[];   // exploratory raw-reply columns (only ever grows, so older rows stay aligned)
@@ -773,14 +782,14 @@ function onBase(v, times){
 const EXP_RATIO={1:168,2:124,3:81,4:61,5:52,6:43,7:34,8:28};   // turbine rpm per mph in each gear, measured on this car
 let slipRun=0, evCounts={}, evLast={}, spdHist=[], tcmHist=[], evPending=[], evTcmOn=false, shiftStart=null;
 const jolt={base:null,t:0,above:0,peak:0,dev:[0,0,0],fwd:[0,0,0],fwdN:0};
-function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0,coast:0,blip:0}; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn; blip=null; jolt.fwd=[0,0,0]; jolt.fwdN=0;
+function evReset(tcmOn){ evCounts={decel:0,jolt:0,slip:0,flare:0,tcc:0,coast:0,blip:0,lock:0}; lockWorst=0; evLast={}; spdHist=[]; tcmHist=[]; evPending=[]; shiftStart=null; evTcmOn=tcmOn; blip=null; jolt.fwd=[0,0,0]; jolt.fwdN=0;
   for(const k in evCounts){ const e=$('ev_'+k); if(e) e.textContent='0'; } }
 function evFlag(type, info){
   const now=performance.now();
   if(evLast[type] && now-evLast[type]<4000) return;
   evLast[type]=now; evCounts[type]=(evCounts[type]||0)+1; const e=$('ev_'+type); if(e) e.textContent=evCounts[type];
   addRow('E',{}, {}, {event:type, event_info:info.replace(/,/g,';')});   // no commas inside a CSV cell
-  if(!['tcc','coast','blip'].includes(type) && $('evBeep').checked) beep();
+  if(!['tcc','coast','blip','lock'].includes(type) && $('evBeep').checked) beep();
   log('Detected '+type+': '+info);
 }
 function pedalWindow(sec){ const now=performance.now(), w=spdHist.filter(s=>s.t>=now-sec*1000 && s.ped!=null);
@@ -823,6 +832,48 @@ function joltFeed(x,y,z){
            evQueue('jolt', 'peak '+jolt.peak.toFixed(1)+' m/s², '+(jolt.above*1000).toFixed(0)+' ms'+(p?(p.max<15.5?', pedal at rest':', pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%'):'')); } }
          jolt.above=0; jolt.peak=0; }
 }
+// Forward (+ = speeding up) and horizontal push of one phone sample, using the gravity estimate and the forward
+// axis that the jolt detector keeps learning.
+function accParts(s){
+  const b=jolt.base; if(!b) return {fwd:null,hor:0};
+  const g=Math.hypot(b[0],b[1],b[2])||1, dx=s.x-b[0], dy=s.y-b[1], dz=s.z-b[2], along=(dx*b[0]+dy*b[1]+dz*b[2])/g;
+  const hx=dx-along*b[0]/g, hy=dy-along*b[1]/g, hz=dz-along*b[2]/g;
+  const fl=Math.hypot(...jolt.fwd), known=jolt.fwdN>=20 && fl>0;
+  return {fwd: known ? (hx*jolt.fwd[0]+hy*jolt.fwd[1]+hz*jolt.fwd[2])/fl : null, hor: Math.hypot(hx,hy,hz)};
+}
+// Write the phone samples between two times as group A rows (each sample once).
+let accDumped=0;
+function accRows(a,b){
+  for(const s of accBuf){ if(s.t<a||s.t>b||s.t<=accDumped) continue;
+    const q=accParts(s), r=[((s.t-t0)/1000).toFixed(3), Date.now(), 'A'];
+    for(const p of ORDER) r.push('');
+    r.push('', '', '', '', '', +s.x.toFixed(2), +s.y.toFixed(2), +s.z.toFixed(2));
+    for(const c of extraCols) r.push(c==='acc_fwd'?(q.fwd==null?'':+q.fwd.toFixed(2)):c==='acc_horiz'?+q.hor.toFixed(2):'');
+    rows.push(r); accDumped=s.t; }
+}
+// Score a lock-up: how far the forward push dropped below what it was just before (m/s²), and how fast.
+let lockWorst=0;
+function lockScore(L){
+  const pre=accBuf.filter(s=>s.t>=L.t0-1500 && s.t<L.t0-200), win=accBuf.filter(s=>s.t>=L.t0-200 && s.t<=L.t1+1000);
+  let score='phone: no data';
+  if(pre.length>=5 && win.length>=5){
+    const hz=(win.length-1)/((win[win.length-1].t-win[0].t)/1000||1);
+    const sm=arr=>arr.map((s,i)=>{ const w=arr.slice(Math.max(0,i-3),i+1); const q=w.map(accParts);
+      return {t:s.t, f:q[0].fwd==null?null:q.reduce((a,x)=>a+x.fwd,0)/q.length, h:q.reduce((a,x)=>a+x.hor,0)/q.length}; });
+    const P=sm(pre), W=sm(win);
+    if(P[0].f!=null){
+      const base=P.reduce((a,x)=>a+x.f,0)/P.length; let dip=0, at=0, jerk=0;
+      W.forEach((x,i)=>{ if(base-x.f>dip){ dip=base-x.f; at=x.t; } if(i){ const j=Math.abs(x.f-W[i-1].f)/((x.t-W[i-1].t)/1000||1); if(j>jerk) jerk=j; } });
+      score='decel dip '+dip.toFixed(2)+' m/s² at '+((at-L.t1)/1000).toFixed(2)+' s; jerk '+jerk.toFixed(0)+' m/s³; phone '+hz.toFixed(0)+' Hz';
+      if(dip>lockWorst){ lockWorst=dip; const e=$('lockWorst'); if(e) e.textContent=dip.toFixed(2); }
+    } else {
+      const base=P.reduce((a,x)=>a+x.h,0)/P.length, peak=Math.max(...W.map(x=>x.h));
+      score='horizontal push +'+(peak-base).toFixed(2)+' m/s² (forward axis not learnt yet); phone '+hz.toFixed(0)+' Hz';
+    }
+  }
+  evFlag('lock','gear '+L.g+'; slip '+L.from.toFixed(0)+' to '+L.to.toFixed(0)+' rpm within '+(L.gap/1000).toFixed(2)+' s; engine '+(L.e0==null?'?':L.e0.toFixed(0))+' to '+(L.e1==null?'?':L.e1.toFixed(0))+' rpm'+(L.p?'; pedal '+L.p.min.toFixed(0)+'-'+L.p.max.toFixed(0)+'%':'')+'; '+score);
+  accRows(L.t0-1500, L.t1+1000);
+}
 // Pedal blip: both pedal sensors go to rest for under a second, then back near where they were. Seen right
 // before two marks on 2026-11-16 and 19 more times that drive. Logged without a beep.
 let blip=null;
@@ -835,13 +886,19 @@ function evPedal(v){
 function evTcm(t){
   const now=performance.now(), g=parseInt(t.tcm_gear,10), tg=parseInt(t.tcm_gear_target,10);
   const last=spdHist.length?spdHist[spdHist.length-1]:{}, spd=last.v, rpm=last.rpm;
-  const cur={t:now, gear:g, tgt:tg, slip:t.tcm_slip_rpm, turb:t.tcm_turbine_rpm, brake:t.tcm_brake, spd, rpm};
+  const cur={t:now, gear:g, tgt:tg, slip:t.tcm_slip_rpm, turb:t.tcm_turbine_rpm, brake:t.tcm_brake, spd, rpm, erpm:t.tcm_engine_rpm};
   const prev=tcmHist.length?tcmHist[tcmHist.length-1]:null;
   tcmHist.push(cur); while(tcmHist.length && tcmHist[0].t<now-10000) tcmHist.shift();
   evResolve();
   if(isNaN(g)||isNaN(tg)||spd==null) return;
   const p=pedalWindow(1.5), steady=p && p.min>=16 && p.max-p.min<=4;
   const settled=prev && prev.gear===g && prev.tgt===g && tg===g;
+  // converter lock-up: slip from 60+ rpm to within 20 rpm, same gear, in D. Scored 1.2 s later from the phone.
+  if(prev && prev.gear===g && g>=2 && t.tcm_lever==='D' && prev.slip>=60 && Math.abs(cur.slip)<=20 && spd>5){
+    lockAfter=now+1500;
+    const info={g, from:prev.slip, to:cur.slip, gap:now-prev.t, e0:prev.erpm, e1:t.tcm_engine_rpm, p, t0:prev.t, t1:now};
+    setTimeout(()=>lockScore(info),1200);
+  }
   // converter unlocks at steady throttle in a high gear (common: logged, no beep)
   if(settled && g>=4 && spd>15 && steady && Math.abs(prev.slip)<30 && cur.slip>100) evFlag('tcc','gear '+g+', slip '+cur.slip.toFixed(0)+' rpm, pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');
   // clutch slip: converter locked but the input shaft turns faster than this gear allows
@@ -860,13 +917,13 @@ function evTcm(t){
 
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0'];
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_engine_rpm','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','acc_fwd','acc_horiz'];
 const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D',0x0C:'M'};   // M = manual gate
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
 function decodeTcm(d){
   if(!d||d.length<23) return null;
-  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4, tcm_brake:d[24]&1,
+  return {tcm_lever:LEVER[d[20]]||('x'+d[20].toString(16).toUpperCase()), tcm_gear:gearTxt(d[21]), tcm_gear_target:gearTxt(d[22]&0x0F), tcm_flag:d[22]>>4, tcm_brake:d[24]&1, tcm_engine_rpm:(d[4]*256+d[5])/4,
           tcm_turbine_rpm:(d[9]*256+d[10])/4, tcm_slip_rpm:((d[16]*256+d[17])-0x800)/4, tcm_01A0:hexStr(d)};
 }
 // Transmission read: switch the request and reply addresses to the transmission and back, the method
@@ -874,11 +931,28 @@ function decodeTcm(d){
 // lost every transmission reply and cut 42% of engine replies short, so it was removed.)
 let tcmPath='';
 async function setupFastTcm(){ tcmPath='atsh'; }
-async function readTcm(){
+async function readTcm(onRead){
   await send('ATSH 7E1'); await send('ATCRA 7E9');
-  const u=parseUds(await send('2201A0',1500));
-  await send('ATSH 7E0'); await send('ATCRA 7E8');
-  return u.kind==='ok' ? decodeTcm(u.data) : null;
+  let last=null;
+  try{
+    for(let n=0;n<4 && running;n++){
+      const u=parseUds(await send('2201A0',1500));
+      const t=u.kind==='ok' ? decodeTcm(u.data) : null;
+      if(!t) break;
+      last=t; if(onRead) onRead(t);
+      if(!lockWatch(t)) break;      // converter locked or no lock-up coming: back to the engine
+    }
+  } finally { await send('ATSH 7E0'); await send('ATCRA 7E8'); }
+  return last;
+}
+// Lock-up watch: in D, rolling, foot on the accelerator and the converter not locked (slip 40+ rpm), or just
+// after a lock-up. Then the transmission is read up to 4 times in a row (about 0.15 s apart) so the lock-up
+// itself is caught; the engine block in between is skipped.
+let lockAfter=0;
+function lockWatch(t){
+  if(!$('lockFocus').checked) return false;
+  if(performance.now()<lockAfter) return true;
+  return t.tcm_lever==='D' && Math.abs(t.tcm_slip_rpm)>=40 && (latest['0D']||0)>8 && (latest['49']||0)>16;
 }
 // ---- Background sweep: other computers, a few IDs at a time while the car is stopped in Monitor mode ----
 // Runs with the engine running and speed 0, pedal at rest, either parked (P or N) or stopped in D with the
@@ -986,7 +1060,7 @@ async function startLogging(){
         const flags=onBase(v, times);
         if(Object.keys(v).length){ addRow(gi, v, flags); lastGood=performance.now(); }
       }
-      if(tcmOn && running){ cyc++; const t=await readTcm(); if(t){ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); }
+      if(tcmOn && running){ cyc++; await readTcm(t=>{ tcmLatest=t; addRow('T',{}, {}, t); evTcm(t); });
         if(running){ const bw=bgReady(); if(bw){ await bgBurst(bw); lastGood=performance.now(); } } }
     }
   }catch(e){ log('Loop error: '+e.message); }
@@ -1333,7 +1407,10 @@ const FS_MODULES=['71A','737','770','771','777','780','7A0','7A1','7A5','7B7','7
 const fsH4=n=>n.toString(16).toUpperCase().padStart(4,'0');
 // Default plan: continue the 7E1 sweep. 04E0-0FFF and 1200-1FFF were finished on the Mac bridge;
 // 2300-AFFF was interrupted before any hit, so it restarts from its first ID.
-const FS_DEFAULT=['7E1 B100 BFFF','7E1 C100 CFFF','7E1 F200 FFFF'].join('\n');
+// From build 2026-11-18-b the default is the other-computer sweep, sharing its progress with the background
+// sweep (localStorage obd_bg_sweep), so nothing either of them finished is asked again. A typed plan still works.
+const FS_OTHERS_WORD='other computers';
+const FS_DEFAULT=FS_OTHERS_WORD;
 // Identification plan (all discovered modules, F180-F1FF): paste into the plan box to use.
 const FS_IDENT_PLAN=FS_MODULES.map(m=>m+' F180 F1FF').join('\n');
 // Other computers, most useful first: 7D1 (likely ABS/ESC), 737 (radar cruise / collision avoidance),
@@ -1343,6 +1420,9 @@ const FS_OTHERS_PLAN=FS_OTHERS.map(m=>m+' 0000 FFFF').join('\n');
 let fsActive=false, fsBusy=false;
 try{ const v=localStorage.getItem('obd_fs_engine'); if(v!==null) $('fsEngineOnly').checked=(v==='1'); }catch(e){}
 $('fsEngineOnly').onchange=()=>{ try{ localStorage.setItem('obd_fs_engine',$('fsEngineOnly').checked?'1':'0'); }catch(e){} };
+function fsWorkLeft(){ const st=fsLoad(); if(st&&!st.done) return true;
+  if($('fsPlan').value.trim().toLowerCase()!==FS_OTHERS_WORD) return true;
+  try{ const b=JSON.parse(localStorage.getItem('obd_bg_sweep')||'null'); return !(b&&b.done); }catch(e){ return true; } }
 function fsLoad(){ try{ return JSON.parse(localStorage.getItem(FS_KEY)||'null'); }catch(e){ return null; } }
 let fsCur=null;
 // 2026-11-17: shortened the transmission sweep. 7E1 2300-73DF was swept (nothing); drop the rest of
@@ -1357,10 +1437,11 @@ let fsCur=null;
   if(!np.length) st.done=true;
   localStorage.setItem(FS_KEY, JSON.stringify(st));
 }catch(e){} })();
+let fsSaveKey=FS_KEY;
 function fsSave(st){
   if(!st) return true;
   st.saved=Date.now();
-  try{ localStorage.setItem(FS_KEY, JSON.stringify(st)); return true; }
+  try{ localStorage.setItem(fsSaveKey, JSON.stringify(st)); if(fsSaveKey===BG_KEY) bgShow(st); return true; }
   catch(e){ $('fsProg').textContent='NOT SAVED: storage full or blocked. Tap Save report to keep results.'; return false; }
 }
 // keep progress if the phone locks or the app goes to the background
@@ -1428,8 +1509,11 @@ function fsRefresh(){
 async function fullScan(){
   if(running||scanning||fsActive||!connected) return;
   if(window.__proto!=='6'&&window.__proto!=='8'){ $('fsOut').textContent='Needs 11-bit CAN (protocol 6 or 8).'; return; }
-  let st=fsLoad();
-  if(!st||st.done){
+  let st=fsLoad(); fsSaveKey=FS_KEY;
+  if((!st||st.done) && $('fsPlan').value.trim().toLowerCase()===FS_OTHERS_WORD){
+    const b=bgLoad(); if(b.done){ $('fsProg').textContent='Other computers: all swept. Type a plan to sweep something else.'; return 'done'; }
+    st=b; fsSaveKey=BG_KEY;
+  } else if(!st||st.done){
     const plan=fsParsePlan($('fsPlan').value);
     if(!plan.length){ $('fsProg').textContent='Plan is empty or wrong. Use lines like: 7E0 F180 F1FF'; return; }
     st={plan:plan,i:0,did:null,miss:0,found:[],done:false};
@@ -1485,7 +1569,7 @@ async function fullScan(){
   fsActive=false;
   try{ await applyTarget(); }catch(e){}
   fsBusy=false;
-  const ok=fsSave(st);
+  const ok=fsSave(st); fsSaveKey=FS_KEY;
   if(st.done) say('Full scan finished. Found '+st.found.length+'. Tap Save report.');
   if(ok) $('fsProg').textContent=(st.done?'Finished':'Stopped')+' · '+fsPos(st)+' · found '+st.found.length+' · saved '+new Date(st.saved).toLocaleTimeString();
   fsUI(st, true);
@@ -1493,7 +1577,7 @@ async function fullScan(){
   return st.done?'done':result;
 }
 fsUI(fsLoad());
-$('fsPlan').value=(fsLoad()&&fsLoad().plan)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
+$('fsPlan').value=(fsLoad()&&fsLoad().plan&&!fsLoad().done)?fsLoad().plan.map(p=>p.tx+' '+fsH4(p.from)+' '+fsH4(p.to)).join('\n'):FS_DEFAULT;
 try{ $('fsParkedOnly').checked=localStorage.getItem('obd_fs_parkedonly')==='1'; }catch(e){}
 try{ const b=localStorage.getItem('obd_bg_on'); if(b!==null) $('bgOn').checked=(b==='1'); }catch(e){}
 $('bgOn').onchange=()=>{ try{ localStorage.setItem('obd_bg_on',$('bgOn').checked?'1':'0'); }catch(e){} };
@@ -1578,6 +1662,7 @@ let markTimer=null;
 // pointerdown, not click: the mark is stamped the instant the finger lands, not when it lifts.
 $('mark').addEventListener('pointerdown',ev=>{ const b=$('mark'); if(b.disabled) return; ev.preventDefault();
   addRow('M',{}, {mark:1}); marks++; $('marks').textContent=marks; buzz(80);
+  { const tm=performance.now(); setTimeout(()=>accRows(tm-4000, tm+1000),1100); }
   b.classList.add('hit'); b.textContent='MARKED ✓ ('+marks+')';
   clearTimeout(markTimer); markTimer=setTimeout(()=>{ b.classList.remove('hit'); b.textContent='I FELT IT (tap)'; },1500); });
 
