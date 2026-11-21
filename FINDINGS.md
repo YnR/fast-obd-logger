@@ -433,6 +433,22 @@ on to B00C.
   reads the transmission up to 8 times in a row. Expected on the car: about 3.9 readings/s each when locked
   (3.4 before) and about 6.5/s transmission while unlocked.
 
+## 01A1 decoded (test "short transmission blocks, driving", 2026-11-21 11:51, 5.6 min, 365 readings of each)
+
+01A2 and 01A3 barely change while driving (01A2 data byte 8 takes 2 values; 01A3 constant): no use. 01A1 (45 data
+bytes, counted from 1 after 62 01 A1) has three useful parts:
+- Bytes 17-21: five shift-element commands, 10 (0x0A) = released, 220 (0xDC) = applied, in between while a shift
+  ramps. Applied pairs by gear: 2nd 19+20, 3rd 19+21, 4th 18+19, 6th 17+18, reverse 17+21, P/N 17; 1st and 5th
+  showed none applied in this drive (one-way clutch or not seen settled). CONFIRMED pattern, element names unknown.
+- Byte 43: follows the converter lock flag (correlation 0.94): 10 when open, 87-145 while applying and locked.
+  At 78-81 s it rose 128 to 143 as slip fell 233 to 131, then dropped to about 91 when the foot came off and the
+  converter finished locking. Most likely the converter-clutch pressure command. LIKELY.
+- Byte 33: 138 at idle, falls with engine speed and with higher gears (unknown).
+
+Build 2026-11-21-d reads 01A1 as every third read in the lock-up watch (group T1 rows: tcm_tcc_cmd,
+tcm_shift_cmd as 5 numbers, tcm_01A1) and adds "clutch command X to Y" to each lock event, so harsh and gentle
+lock-ups can be compared by how hard the clutch was commanded.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |

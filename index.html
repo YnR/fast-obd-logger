@@ -260,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-21-c · quick switching, longer lock-up watch</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-21-d · converter-clutch command in the lock-up watch</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -864,6 +864,7 @@ function accRows(a,b){
 // Score a lock-up: how far the forward push dropped below what it was just before (m/s²), and how fast.
 let lockWorst=0, lockRun=null;
 function lockScore(L){
+  const cmdAfter=(tcm1Latest && tcm1Latest.t>=L.t1-1000) ? tcm1Latest.tcm_tcc_cmd : null;
   const pre=accBuf.filter(s=>s.t>=L.t0-1500 && s.t<L.t0-200), win=accBuf.filter(s=>s.t>=L.t0-200 && s.t<=L.t1+1000);
   let score='phone: no data';
   if(pre.length>=5 && win.length>=5){
@@ -881,7 +882,7 @@ function lockScore(L){
       score='horizontal push +'+(peak-base).toFixed(2)+' m/s² (forward axis not learnt yet); phone '+hz.toFixed(0)+' Hz';
     }
   }
-  evFlag('lock','gear '+L.g+'; slip '+L.from.toFixed(0)+' to '+L.to.toFixed(0)+' rpm in '+(L.gap/1000).toFixed(2)+' s over '+L.n+' readings; fastest fall '+L.maxFall.toFixed(0)+' rpm/s'+(L.over!=null?'; OVERSHOOT to '+L.over.toFixed(0)+' rpm':'')+'; engine '+(L.e0==null?'?':L.e0.toFixed(0))+' to '+(L.e1==null?'?':L.e1.toFixed(0))+' rpm'+(L.p?'; pedal '+L.p.min.toFixed(0)+'-'+L.p.max.toFixed(0)+'%':'')+'; '+score);
+  evFlag('lock','gear '+L.g+'; slip '+L.from.toFixed(0)+' to '+L.to.toFixed(0)+' rpm in '+(L.gap/1000).toFixed(2)+' s over '+L.n+' readings; fastest fall '+L.maxFall.toFixed(0)+' rpm/s'+(L.over!=null?'; OVERSHOOT to '+L.over.toFixed(0)+' rpm':'')+((L.cmd0!=null||cmdAfter!=null)?'; clutch command '+(L.cmd0==null?'?':L.cmd0)+' to '+(cmdAfter==null?'?':cmdAfter):'')+'; engine '+(L.e0==null?'?':L.e0.toFixed(0))+' to '+(L.e1==null?'?':L.e1.toFixed(0))+' rpm'+(L.p?'; pedal '+L.p.min.toFixed(0)+'-'+L.p.max.toFixed(0)+'%':'')+'; '+score);
   accRows(L.t0-1500, L.t1+1000);
 }
 // Pedal blip: both pedal sensors go to rest for under a second, then back near where they were. Seen right
@@ -911,7 +912,7 @@ function evTcm(t){
   else if(cur.slip>=60 && lockRun && cur.slip<lockRun.last.slip-10 && now-lockRun.t0<=2500){   // still falling: same lock-up
     const dtl=(now-lockRun.last.t)/1000; if(dtl>0){ const fall=(lockRun.last.slip-cur.slip)/dtl; if(fall>lockRun.maxFall) lockRun.maxFall=fall; }
     lockRun.n++; lockRun.last=cur; }
-  else if(cur.slip>=60){ lockRun={g, from:cur.slip, t0:now, e0:t.tcm_engine_rpm, n:0, min:cur.slip, maxFall:0, last:cur}; }
+  else if(cur.slip>=60){ lockRun={g, from:cur.slip, t0:now, e0:t.tcm_engine_rpm, n:0, min:cur.slip, maxFall:0, last:cur, cmd0:tcm1Latest&&now-tcm1Latest.t<1500?tcm1Latest.tcm_tcc_cmd:null}; }
   else if(lockRun){
     lockRun.n++; if(cur.slip<lockRun.min) lockRun.min=cur.slip;
     const dtl=(now-lockRun.last.t)/1000; if(dtl>0){ const fall=(lockRun.last.slip-cur.slip)/dtl; if(fall>lockRun.maxFall) lockRun.maxFall=fall; }
@@ -920,7 +921,7 @@ function evTcm(t){
     else if(Math.abs(cur.slip)<=20 && spd>5){
       lockAfter=now+1500;
       const L=lockRun; lockRun=null;
-      const info={g, from:L.from, to:cur.slip, gap:now-L.t0, n:L.n, over:L.min<-20?L.min:null, maxFall:L.maxFall, e0:L.e0, e1:t.tcm_engine_rpm, p, t0:L.t0, t1:now};
+      const info={g, cmd0:L.cmd0, from:L.from, to:cur.slip, gap:now-L.t0, n:L.n, over:L.min<-20?L.min:null, maxFall:L.maxFall, e0:L.e0, e1:t.tcm_engine_rpm, p, t0:L.t0, t1:now};
       setTimeout(()=>lockScore(info),1200);
     }
   }
@@ -942,7 +943,14 @@ function evTcm(t){
 
 // Transmission block 22 01A0 on 7E1 (decoded on this car; gears 1 to 8 and R confirmed against RPM/speed ratios).
 // Byte 23: low half = target gear, high half = a flag that is set whenever the converter is locked (meaning not confirmed).
-const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_engine_rpm','tcm_turbine_rpm','tcm_slip_rpm','tcm_01A0','acc_fwd','acc_horiz'];
+// 01A1 (decoded 2026-11-21 from a drive reading all four blocks): data bytes 17-21 are five shift-element
+// commands (10 = released, 220 = applied, in between while a shift ramps; each gear applies its own pair), and
+// byte 43 follows the converter lock flag (10 when open, about 85-145 while applying or locked): most likely the
+// converter-clutch pressure command. Byte 33 falls as engine speed rises (unknown). Rows of group T1.
+const TCM_COLS=['tcm_lever','tcm_gear','tcm_gear_target','tcm_flag','tcm_brake','tcm_engine_rpm','tcm_turbine_rpm','tcm_slip_rpm','tcm_tcc_cmd','tcm_shift_cmd','tcm_01A0','tcm_01A1','acc_fwd','acc_horiz'];
+function decodeTcm1(d){ if(!d||d.length<43) return null;
+  return {tcm_tcc_cmd:d[42], tcm_shift_cmd:[16,17,18,19,20].map(i=>d[i]).join('/'), tcm_01A1:hexStr(d)}; }
+let tcm1Latest=null;
 const LEVER={0x0B:'P',0x0A:'R',0x09:'N',0x08:'D',0x0C:'M'};   // M = manual gate
 const gearTxt=g=>g===0x0E?'R':String(g);
 let tcmLatest=null, logEndWhy='';
@@ -969,6 +977,9 @@ async function readTcm(onRead){
   try{
     const most=$('lockFocus').checked?8:1;
     for(let n=0;n<most && running;n++){
+      // in the lock-up watch every third read is 01A1 (converter-clutch command and shift elements)
+      if(n%3===2){ const u1=parseUds(await send('2201A1',1500)); const t1=u1.kind==='ok'?decodeTcm1(u1.data):null;
+        if(t1){ tcm1Latest=Object.assign({t:performance.now()},t1); addRow('T1',{}, {}, t1); } continue; }
       const u=parseUds(await send('2201A0',1500));
       const t=u.kind==='ok' ? decodeTcm(u.data) : null;
       if(!t) break;
