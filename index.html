@@ -51,7 +51,7 @@
   #gText{font-size:20px;font-weight:700;margin:6px 0 10px}
   #gNext{width:100%;font-size:22px;padding:20px;background:var(--mut);color:#fff;font-weight:700;margin-bottom:6px}
   #gNext.ready{background:var(--ok);color:#06281a}
-  #mark{width:100%;font-size:20px;padding:22px;background:var(--warn);color:#241600;font-weight:700;transition:background .15s,transform .08s;touch-action:manipulation}
+  #mark{width:100%;height:33vh;height:33dvh;font-size:40px;padding:12px;border-radius:18px;background:var(--warn);color:#241600;font-weight:700;transition:background .15s,transform .08s;touch-action:manipulation}
   #mark:active{transform:scale(.97)}
   #mark.hit{background:var(--ok);color:#06281a}
   canvas{width:100%;height:150px;background:#0d1014;border-radius:8px}
@@ -259,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-20-a · lock-ups over several readings</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-21-a · big I FELT IT button; updates keep data</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -994,6 +994,13 @@ function bgLoad(){ let st=null; try{ st=JSON.parse(localStorage.getItem(BG_KEY)|
   return st&&st.plan ? st : {plan:bgPlan(),i:0,did:null,miss:0,found:[],done:false}; }
 function bgStore(st){ st.saved=Date.now(); try{ localStorage.setItem(BG_KEY, JSON.stringify(st)); }catch(e){} }
 let bgStoppedSince=0, bgNewFinds=0;
+// 2026-11-21: the app had to be uninstalled for an update (new signing key each build), which wiped the sweep
+// progress; it started again from 7D1 0100. 7D1 0100-01FF and B000-B00B were already done on 2026-11-18, so a sweep
+// still inside that stretch skips to B00C, keeping what it found.
+(function(){ try{ const st=JSON.parse(localStorage.getItem('obd_bg_sweep')||'null'); if(!st||!st.plan||st.done||st.floorApplied) return;
+  const r=st.plan[st.i]; if(st.i===0 && r && r.tx==='7D1' && r.from===0x0100){ st.i=1; st.did=0xB00C; st.miss=0; }
+  else if(st.i===1 && r && r.tx==='7D1' && r.from===0xB000 && (st.did==null||st.did<0xB00C)){ st.did=0xB00C; st.miss=0; }
+  st.floorApplied=true; localStorage.setItem('obd_bg_sweep', JSON.stringify(st)); }catch(e){} })();
 // Phone plugged in? (car USB power, so the ignition is on). Older app versions without isCharging: false.
 function phoneCharging(){ try{ return !!(window.AndroidBT && AndroidBT.isCharging && AndroidBT.isCharging()); }catch(e){ return false; } }
 function bgWhere(){   // '' = not stopped, 'P' = parked in P or N (or engine off), 'D' = stopped in gear with the brake on

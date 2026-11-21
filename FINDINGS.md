@@ -395,6 +395,17 @@ to within 20 rpm in the same gear within 2 s): 21 lock-ups, the app logged 14. T
 clutch grabbing hard. Build 2026-11-20-a follows the fall over several readings and logs the overshoot and the
 fastest fall rate (rpm/s).
 
+## Drive 2026-11-21 11:16 (5 min; two saves of the same drive, phone on build 2026-11-19-a)
+
+No marks. Four lock-ups, all mild (decel dip 0.64-0.83 m/s², jerk 8-31 m/s³). Requests: median 0.15 s engine,
+0.19 s transmission; transmission 2.8/s, engine 1.35/s.
+
+The background sweep had started again from 7D1 0100 (at 0157, finds re-read). Cause: every GitHub build was
+signed with a new random debug key, so an update needed an uninstall, which wiped the app's data. Fixed in build
+2026-11-21-a with a fixed signing key in the repo and an increasing versionCode (one more uninstall needed to
+switch to the fixed key, after that updates keep data). The same build moves a sweep still inside 7D1 0100-B00B
+on to B00C.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |

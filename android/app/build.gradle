@@ -10,8 +10,23 @@ android {
         applicationId 'app.fastobd'
         minSdk 29
         targetSdk 34
-        versionCode 1
+        // Each GitHub build gets a higher number so phones accept it as an update.
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer)
         versionName '1.0'
+    }
+    // One fixed signing key, kept in the repo (a debug key, not a secret). Before 2026-11-21 every GitHub build was
+    // signed with a new random debug key, so the phone refused updates and the app had to be uninstalled, which
+    // wiped its saved data (background sweep progress, settings).
+    signingConfigs {
+        debug {
+            storeFile file('fastobd-debug.keystore')
+            storePassword 'android'
+            keyAlias 'fastobd'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.debug }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
