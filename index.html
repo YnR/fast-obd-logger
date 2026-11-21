@@ -106,6 +106,7 @@
     <p>Rate: <b id="hz">–</b> Hz &nbsp; Rows: <b id="rows">0</b> &nbsp; Pedal dips: <b id="dips">0</b> &nbsp; Marks: <b id="marks">0</b></p>
     <p id="evLine"><small>Detected: deceleration <b id="ev_decel">0</b> · jolt <b id="ev_jolt">0</b> · clutch slip <b id="ev_slip">0</b> · shift flare <b id="ev_flare">0</b> · converter unlock <b id="ev_tcc">0</b> · pedal blip <b id="ev_blip">0</b> · coasting <b id="ev_coast">0</b> · converter lock-up <b id="ev_lock">0</b> (hardest <b id="lockWorst">0</b> m/s²)</small></p>
     <label style="display:block"><input type="checkbox" id="lockFocus" checked> <small>Lock-up watch: read the transmission several times in a row while the converter is unlocked</small></label>
+    <label style="display:block"><input type="checkbox" id="quickSw" checked> <small>Quick switching between engine and transmission (falls back by itself if the transmission stops answering)</small></label>
     <div id="tcmGrid" class="grid" style="margin-bottom:8px">
       <div class="cell"><span>lever</span><b id="tLever">–</b></div>
       <div class="cell"><span>gear</span><b id="tGear">–</b></div>
@@ -259,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-21-b · sampling tests in Identify</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-21-c · quick switching, longer lock-up watch</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -435,7 +436,9 @@ async function writeStr(s){
     else await wChar.writeValue(ch);
   }
 }
+let craState=null;   // last ATCRA sent ('' = filter cleared: the adapter's default, which passes 7E8-7EF)
 function send(cmd, timeout=1200){
+  if(/^ATCRA/i.test(cmd)) craState=cmd.slice(5).trim().toUpperCase();
   return new Promise((resolve,reject)=>{
     rxBuf='';
     const p={resolve}; pending=p;
@@ -953,22 +956,32 @@ function decodeTcm(d){
 // lost every transmission reply and cut 42% of engine replies short, so it was removed.)
 let tcmPath='';
 async function setupFastTcm(){ tcmPath='atsh'; }
+// Quick switching (build 2026-11-21-c): the diagnostic port carries no traffic of its own (bus-listening test,
+// 2026-11-21), so the receive filter is not needed for the engine (7E8) and transmission (7E9) replies: it is
+// cleared once and only the request header changes, 2 commands per cycle instead of 4 (about 40 ms saved).
+// If the transmission stops answering twice in a row, the app goes back to full switching for the session.
+let quickSwitch=true, tcmMiss=0;
 async function readTcm(onRead){
-  await send('ATSH 7E1'); await send('ATCRA 7E9');
+  const quick=quickSwitch && $('quickSw').checked;
+  if(quick){ if(craState!=='') await send('ATCRA'); await send('ATSH 7E1'); }
+  else { await send('ATSH 7E1'); await send('ATCRA 7E9'); }
   let last=null;
   try{
-    for(let n=0;n<4 && running;n++){
+    const most=$('lockFocus').checked?8:1;
+    for(let n=0;n<most && running;n++){
       const u=parseUds(await send('2201A0',1500));
       const t=u.kind==='ok' ? decodeTcm(u.data) : null;
       if(!t) break;
       last=t; if(onRead) onRead(t);
       if(!lockWatch(t)) break;      // converter locked or no lock-up coming: back to the engine
     }
-  } finally { await send('ATSH 7E0'); await send('ATCRA 7E8'); }
+  } finally { if(quick) await send('ATSH 7E0'); else { await send('ATSH 7E0'); await send('ATCRA 7E8'); } }
+  if(last) tcmMiss=0;
+  else if(quick && ++tcmMiss>=2){ quickSwitch=false; log('Quick switching: transmission not answering, back to full switching'); }
   return last;
 }
 // Lock-up watch: in D, rolling, foot on the accelerator and the converter not locked (slip 40+ rpm), or just
-// after a lock-up. Then the transmission is read up to 4 times in a row (about 0.15 s apart) so the lock-up
+// after a lock-up. Then the transmission is read up to 8 times in a row (about 0.14 s apart, from 2026-11-21; 4 before) so the lock-up
 // itself is caught; the engine block in between is skipped.
 let lockAfter=0;
 function lockWatch(t){

@@ -417,6 +417,22 @@ signed with a new random debug key, so an update needed an uninstall, which wipe
 switch to the fixed key, after that updates keep data). The same build moves a sweep still inside 7D1 0100-B00B
 on to B00C.
 
+## Sampling tests 2026-11-21 (parked, engine idling)
+
+- Bus listening: 0 frames in 2 x 10 s with STMA, and 0 with ATMA (only the "STOPPED" at the end). The diagnostic
+  port carries no traffic of its own (a gateway, most likely), so passive listening is out. (Caveat: assumes no
+  STN-level filter was set; the app never sets one.)
+- Read speed: engine Mode 01 group 77 ms; 01A0 140 ms (7.1/s); 01A1 144 ms; 01A2 77 ms; 01A3 72 ms; one Monitor
+  cycle (engine + 01A0 + 4 address commands) 296 ms, so the 4 address commands cost about 80 ms.
+- Short blocks while revving (idle, 2000, idle, 3000 rpm in P): 01A2 (`10 00 00 00 00 00 00 FF`) and 01A3
+  (`F8 00 ...`) never changed: no speed or slip in them. 01A1 has one byte (data byte 37, counted after 62 01 A1)
+  that falls as engine speed rises: 0x8A (138) at idle, 0x82-0x89 at 2000, 0x2B-0x6A at 2300-3400 rpm. Meaning
+  unknown (a pressure or solenoid duty?); GUESSED. 01A0 stays the block to read.
+- Build 2026-11-21-c: "quick switching" clears the receive filter once and changes only the header (2 commands
+  per cycle instead of 4), with automatic fallback if the transmission stops answering twice; lock-up watch now
+  reads the transmission up to 8 times in a row. Expected on the car: about 3.9 readings/s each when locked
+  (3.4 before) and about 6.5/s transmission while unlocked.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
