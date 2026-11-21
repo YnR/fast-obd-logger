@@ -259,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-19-a · Sweep mode removed; sweep while charging</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-20-a · lock-ups over several readings</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -857,7 +857,7 @@ function accRows(a,b){
     rows.push(r); accDumped=s.t; }
 }
 // Score a lock-up: how far the forward push dropped below what it was just before (m/s²), and how fast.
-let lockWorst=0;
+let lockWorst=0, lockRun=null;
 function lockScore(L){
   const pre=accBuf.filter(s=>s.t>=L.t0-1500 && s.t<L.t0-200), win=accBuf.filter(s=>s.t>=L.t0-200 && s.t<=L.t1+1000);
   let score='phone: no data';
@@ -876,7 +876,7 @@ function lockScore(L){
       score='horizontal push +'+(peak-base).toFixed(2)+' m/s² (forward axis not learnt yet); phone '+hz.toFixed(0)+' Hz';
     }
   }
-  evFlag('lock','gear '+L.g+'; slip '+L.from.toFixed(0)+' to '+L.to.toFixed(0)+' rpm within '+(L.gap/1000).toFixed(2)+' s; engine '+(L.e0==null?'?':L.e0.toFixed(0))+' to '+(L.e1==null?'?':L.e1.toFixed(0))+' rpm'+(L.p?'; pedal '+L.p.min.toFixed(0)+'-'+L.p.max.toFixed(0)+'%':'')+'; '+score);
+  evFlag('lock','gear '+L.g+'; slip '+L.from.toFixed(0)+' to '+L.to.toFixed(0)+' rpm in '+(L.gap/1000).toFixed(2)+' s over '+L.n+' readings; fastest fall '+L.maxFall.toFixed(0)+' rpm/s'+(L.over!=null?'; OVERSHOOT to '+L.over.toFixed(0)+' rpm':'')+'; engine '+(L.e0==null?'?':L.e0.toFixed(0))+' to '+(L.e1==null?'?':L.e1.toFixed(0))+' rpm'+(L.p?'; pedal '+L.p.min.toFixed(0)+'-'+L.p.max.toFixed(0)+'%':'')+'; '+score);
   accRows(L.t0-1500, L.t1+1000);
 }
 // Pedal blip: both pedal sensors go to rest for under a second, then back near where they were. Seen right
@@ -898,11 +898,26 @@ function evTcm(t){
   if(isNaN(g)||isNaN(tg)||spd==null) return;
   const p=pedalWindow(1.5), steady=p && p.min>=16 && p.max-p.min<=4;
   const settled=prev && prev.gear===g && prev.tgt===g && tg===g;
-  // converter lock-up: slip from 60+ rpm to within 20 rpm, same gear, in D. Scored 1.2 s later from the phone.
-  if(prev && prev.gear===g && g>=2 && t.tcm_lever==='D' && prev.slip>=60 && Math.abs(cur.slip)<=20 && spd>5){
-    lockAfter=now+1500;
-    const info={g, from:prev.slip, to:cur.slip, gap:now-prev.t, e0:prev.erpm, e1:t.tcm_engine_rpm, p, t0:prev.t, t1:now};
-    setTimeout(()=>lockScore(info),1200);
+  // converter lock-up: slip falls from 60+ rpm to within 20 rpm in the same gear, in D, within 2.5 s, over one
+  // or several readings (with fast reads most lock-ups take several; until build 2026-11-20-a only one-reading
+  // lock-ups were counted and about a third were missed). Overshoot = most negative slip on the way (engine
+  // pulled below the turbine: the clutch grabbed hard). Scored 1.2 s later from the phone.
+  if(t.tcm_lever!=='D' || g<2 || (lockRun && lockRun.g!==g)) lockRun=null;
+  else if(cur.slip>=60 && lockRun && cur.slip<lockRun.last.slip-10 && now-lockRun.t0<=2500){   // still falling: same lock-up
+    const dtl=(now-lockRun.last.t)/1000; if(dtl>0){ const fall=(lockRun.last.slip-cur.slip)/dtl; if(fall>lockRun.maxFall) lockRun.maxFall=fall; }
+    lockRun.n++; lockRun.last=cur; }
+  else if(cur.slip>=60){ lockRun={g, from:cur.slip, t0:now, e0:t.tcm_engine_rpm, n:0, min:cur.slip, maxFall:0, last:cur}; }
+  else if(lockRun){
+    lockRun.n++; if(cur.slip<lockRun.min) lockRun.min=cur.slip;
+    const dtl=(now-lockRun.last.t)/1000; if(dtl>0){ const fall=(lockRun.last.slip-cur.slip)/dtl; if(fall>lockRun.maxFall) lockRun.maxFall=fall; }
+    lockRun.last=cur;
+    if(now-lockRun.t0>2500) lockRun=null;
+    else if(Math.abs(cur.slip)<=20 && spd>5){
+      lockAfter=now+1500;
+      const L=lockRun; lockRun=null;
+      const info={g, from:L.from, to:cur.slip, gap:now-L.t0, n:L.n, over:L.min<-20?L.min:null, maxFall:L.maxFall, e0:L.e0, e1:t.tcm_engine_rpm, p, t0:L.t0, t1:now};
+      setTimeout(()=>lockScore(info),1200);
+    }
   }
   // converter unlocks at steady throttle in a high gear (common: logged, no beep)
   if(settled && g>=4 && spd>15 && steady && Math.abs(prev.slip)<30 && cur.slip>100) evFlag('tcc','gear '+g+', slip '+cur.slip.toFixed(0)+' rpm, pedal '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');

@@ -378,6 +378,23 @@ Working hypothesis: the felt event is the torque converter clutch applying (hars
 or together with a shift. Next: a drive on build 2026-11-18-a (transmission every cycle) to see how fast the
 slip falls at felt versus unfelt lock-ups.
 
+## Monitor drives 2026-11-19 16:51 (24 min) and 2026-11-20 16:56 (6 min), build 2026-11-19-a
+
+No marks in either drive. 15 lock-ups logged with phone scores, all mild: decel dip 0.5-0.9 m/s² on 11-19 (phone
+noise there about 0.26 m/s², forward axis not learnt for the first 3 minutes; jolts of 9.8 and 21.5 m/s² at 127 and
+179 s look like the phone being handled) and 0.1-0.3 m/s² on 11-20 (noise 0.11). These are the baseline for
+unremarkable lock-ups.
+
+Sample rate: 11-20 good (transmission 2.1-3.5/s, engine 1.4-2.4/s; median request 0.14 s engine, 0.17 s
+transmission). 11-19 poor: 215 s of the 24 min were red-light sweep pauses (by design), and outside those the
+requests had a long tail (median 0.20/0.26 s, 90% 0.72/0.95 s). Cause of the slow tail still unknown.
+
+Detector gap found: with faster reads many lock-ups take several readings. Re-counting from the logs (slip 60+
+to within 20 rpm in the same gear within 2 s): 21 lock-ups, the app logged 14. Two of the missed ones overshot
+(slip went negative, to -224 rpm at 1281.6 s on 11-19 and -28 rpm at 251.9 s on 11-20), the signature of the
+clutch grabbing hard. Build 2026-11-20-a follows the fall over several readings and logs the overshoot and the
+fastest fall rate (rpm/s).
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
