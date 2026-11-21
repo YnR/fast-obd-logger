@@ -259,7 +259,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-21-a · big I FELT IT button; updates keep data</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-21-b · sampling tests in Identify</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -417,7 +417,9 @@ const selectedPids = ()=>[...document.querySelectorAll('#pidList input:checked')
 // ---- BLE transport ----
 const NATIVE = (typeof AndroidBT!=='undefined');   // true inside the Android app (classic Bluetooth bridge)
 function onNotify(ev){ onData(dec.decode(ev.target.value)); }
+let rxTap=null;   // set by the bus-listening test to see every received character
 function onData(t){
+  if(rxTap){ rxTap(t); return; }
   rxBuf += t;
   if(rxBuf.includes('>')){
     const t=rxBuf; rxBuf='';
@@ -1224,6 +1226,21 @@ const TESTS={
     {id:'press1',t:'Press DRIVE MODE once now. Hold.', hold:15},
     {id:'press2',t:'Press DRIVE MODE again now. Hold.', hold:15},
     {id:'press3',t:'Press again until it is back where it started. Hold.', hold:15}]},
+  // ---- faster sampling of slip, engine speed and deceleration (added 2026-11-21) ----
+  buslisten:{name:'Listen to the car\'s own traffic', where:'parked', mins:1, sets:[], run:(api)=>runBusListen(api)},
+  readrate:{name:'Read speed of each block', where:'parked', mins:1, sets:[], run:(api)=>runReadRate(api)},
+  shortrev:{name:'Short transmission blocks, revving', where:'parked', mins:2, sets:['tcm'], steps:()=>[
+    {id:'idle1', t:'In P, engine idling, foot off. Hold.', hold:10},
+    {id:'rev2k', t:'Press the accelerator gently to about 2,000 rpm and hold it there.', hold:10},
+    {id:'idle2', t:'Release. Idle. Hold.', hold:8},
+    {id:'rev3k', t:'Press gently to about 3,000 rpm and hold it there.', hold:10},
+    {id:'idle3', t:'Release. Idle. Hold.', hold:8}]},
+  mount:{name:'Phone mount check', where:'parked', mins:1, sets:[], run:(api)=>runMountCheck(api)},
+  shortdrive:{name:'Short transmission blocks, driving', where:'driving', mins:4, sets:['tcm'],
+    plan:['This reads all four transmission blocks (01A0 to 01A3) while you drive, to find out whether the small ones carry slip or turbine speed.',
+          'Drive normally for about four minutes, with some gentle acceleration and some steady cruising so the converter locks and unlocks.',
+          'There is nothing to tap or read. When you are stopped at the end, press the End button.'],
+    steps:()=>[{id:'drive', t:'Drive normally', say:'Recording. Drive normally. Press End when you are stopped.', mark:true}]},
   custom:{name:'Custom on/off test', where:'parked', mins:2, sets:['tcm','engWide','others'], custom:true, steps:(what)=>onOff(what||'It',15)},
   free:{name:'Free recording', where:'parked', mins:0, sets:['tcm','engWide','others'], steps:()=>[
     {id:'free', t:'Recording every block. Do whatever you want to test, then tap FINISH.', hold:5}]},
@@ -1338,6 +1355,7 @@ async function gStart(key, label){
   const def=TESTS[key];
   if(!connected){ setStatus('Connect to the dongle first.'); return; }
   if(window.__proto!=='6'&&window.__proto!=='8'){ setStatus('Waiting for the car to answer (ignition on), then tap the test again.'); return; }
+  if(def.run){ return gSpecial(key, def); }
   gT={key:key, name:def.name, label:label||'', where:def.where, steps:def.steps(label), i:0, started:false};
   fsActive=false; scanning=false; running=false;
   for(let k=0;k<40 && (running||busyInit||fsCur&&fsActiveBusy());k++) await sleepMs(250);
@@ -1376,8 +1394,111 @@ $('driveOv').onclick=ev=>{
   if((performance.now()-gT.since)/1000 < (s.hold||0)) return;      // ignore accidental early taps
   gNextStep();
 };
-$('gAbort').onclick=()=>gEnd('ended by you');
+$('gAbort').onclick=()=>{ if(gT&&gT.special){ gT.stop=true; return; } gEnd('ended by you'); };
 $('dEnd').onclick=()=>gEnd(gT&&gT.steps[gT.i].mark?'finished':'ended by you');
+// ---- tests that run their own requests (no logging) ----
+async function gSpecial(key, def){
+  gT={key, name:def.name, special:true, stop:false, steps:[], i:0, started:false};
+  fsActive=false; scanning=false; running=false;
+  for(let k=0;k<40 && (running||busyInit);k++) await sleepMs(250);
+  await endSession('starting a test');
+  $('guide').style.display=''; $('gTitle').textContent=def.name; $('gNext').disabled=true; $('gNext').className='';
+  const api={
+    show:(t)=>{ $('gText').textContent=t; speak(t); },
+    wait:async(secs,label)=>{ const end=performance.now()+secs*1000; while(performance.now()<end && !gT.stop && connected){ $('gNext').textContent=(label||'recording')+' · '+Math.ceil((end-performance.now())/1000)+' s'; await sleepMs(200); } return !gT.stop; },
+    stopped:()=>gT.stop||!connected,
+  };
+  let text=null, summary='';
+  try{ const r=await def.run(api); text=r.text; summary=r.summary; }
+  catch(e){ summary='Test failed: '+e.message; log(summary); }
+  rxTap=null; rxBuf='';
+  if(key==='buslisten'){ try{ await writeStr('\r'); await sleepMs(400); rxBuf=''; await send('ATH0'); }catch(e){} }
+  try{ await applyTarget(); }catch(e){}
+  $('guide').style.display='none'; gT=null;
+  let saved=false;
+  if(text){ saved=await saveFile(text,'obd_test_'+key,'txt','text/plain'); }
+  if(saved){ testsDone[key]=Date.now(); try{ localStorage.setItem('obd_tests_done',JSON.stringify(testsDone)); }catch(e){} renderTiles(); }
+  speak(saved?'Test complete. File saved.':'Test ended.');
+  setStatus(def.name+': '+summary+(saved?' File saved: send it to Claude.':''));
+}
+// Bus listening: the adapter only listens (STMA, monitor all) and repeats every frame it sees on the bus.
+// Nothing is sent to the car. Two phases: idling, then gentle revving, so frames that carry engine speed show up.
+async function runBusListen(api){
+  const out=['Fast OBD Logger bus listening '+new Date().toISOString(),'protocol '+window.__proto,''];
+  const phases=[['idle','In P, engine idling, foot off. Listening for 10 seconds.',10],
+                ['rev','Now rev gently to about 2,500 rpm and release, twice, within 10 seconds.',10]];
+  const raw=[], stats={};
+  await send('ATH1'); await send('ATCRA');
+  for(const [id,txt,secs] of phases){
+    if(api.stopped()) break;
+    api.show(txt); await sleepMs(1500);
+    let buf='', n=0, full=0, t1=performance.now();
+    rxTap=(t)=>{ buf+=t; let k; while((k=buf.search(/[\r\n]/))>=0){ const line=buf.slice(0,k).trim(); buf=buf.slice(k+1); if(!line) continue;
+      const ms=Math.round(performance.now()-t1);
+      if(/BUFFER FULL|DATA ERROR|<RX ERROR|STOPPED/i.test(line)){ full++; raw.length<30000&&raw.push(id+' '+ms+' '+line); continue; }
+      const m=line.replace(/\s/g,'').match(/^([0-9A-F]{3})([0-9A-F]*)$/); if(!m) { raw.length<30000&&raw.push(id+' '+ms+' ? '+line); continue; }
+      n++; const st=stats[m[1]]=stats[m[1]]||{idle:0,rev:0,vals:{}}; st[id]++; st.vals[m[2]]=1;
+      if(raw.length<30000) raw.push(id+' '+ms+' '+m[1]+' '+m[2]); } };
+    await writeStr('STMA\r');
+    await api.wait(secs, id==='idle'?'listening (idle)':'listening (rev)');
+    await writeStr('\r'); await sleepMs(600);
+    rxTap=null; rxBuf='';
+    const dur=(performance.now()-t1)/1000;
+    out.push('phase '+id+': '+n+' frames in '+dur.toFixed(1)+' s ('+(n/dur).toFixed(0)+'/s), buffer-full or errors: '+full);
+    if(n===0){ // maybe not an STN chip: plain ELM monitor
+      out.push('  no frames with STMA; trying ATMA for 3 s');
+      t1=performance.now(); rxTap=(t)=>{ buf+=t; let k; while((k=buf.search(/[\r\n]/))>=0){ const line=buf.slice(0,k).trim(); buf=buf.slice(k+1); const m=line.replace(/\s/g,'').match(/^([0-9A-F]{3})([0-9A-F]*)$/); if(m){ n++; const st=stats[m[1]]=stats[m[1]]||{idle:0,rev:0,vals:{}}; st[id]++; st.vals[m[2]]=1; raw.length<30000&&raw.push(id+' '+Math.round(performance.now()-t1)+' '+m[1]+' '+m[2]); } } };
+      await writeStr('ATMA\r'); await sleepMs(3000); await writeStr('\r'); await sleepMs(600); rxTap=null; rxBuf='';
+      out.push('  ATMA frames: '+n);
+    }
+  }
+  await send('ATH0');
+  const ids=Object.keys(stats).sort();
+  out.push('','IDs seen: '+ids.length,'id  frames-idle  frames-rev  distinct-payloads');
+  ids.forEach(i=>out.push(i+'  '+stats[i].idle+'  '+stats[i].rev+'  '+Object.keys(stats[i].vals).length));
+  out.push('','raw frames (phase, ms since phase start, id, data):'); out.push(...raw);
+  const total=ids.reduce((a,i)=>a+stats[i].idle+stats[i].rev,0);
+  return {text:out.join('\n'), summary: total? ids.length+' message IDs heard, '+total+' frames.' : 'no traffic heard at the port (likely a gateway).'};
+}
+// Read speed: how long each kind of request takes on this car and adapter.
+async function runReadRate(api){
+  const out=['Fast OBD Logger read speed '+new Date().toISOString(),''];
+  const groups=DEFAULT_ON.map(p=>p).join('');
+  const tests=[
+    ['engine', async()=>{ await send('01'+groups,1500); }, 'eng'],
+    ['01A0', async()=>{ await send('2201A0',1500); }, 'tcm'],
+    ['01A1', async()=>{ await send('2201A1',1500); }, 'tcm'],
+    ['01A2', async()=>{ await send('2201A2',1500); }, 'tcm'],
+    ['01A3', async()=>{ await send('2201A3',1500); }, 'tcm'],
+    ['engine+01A0 switching', async()=>{ await send('ATSH 7E0'); await send('ATCRA 7E8'); await send('01'+groups,1500); await send('ATSH 7E1'); await send('ATCRA 7E9'); await send('2201A0',1500); }, 'mix'],
+  ];
+  api.show('Stay parked with the engine running. Measuring how fast each kind of reading is (about 30 seconds).');
+  let res=[];
+  for(const [name,fn,where] of tests){
+    if(api.stopped()) break;
+    if(where==='eng'){ await send('ATSH 7E0'); await send('ATCRA 7E8'); }
+    if(where==='tcm'){ await send('ATSH 7E1'); await send('ATCRA 7E9'); }
+    const n=where==='mix'?10:20, t1=performance.now();
+    for(let k=0;k<n && !api.stopped();k++) await fn();
+    const ms=(performance.now()-t1)/n; res.push([name,ms]); $('gNext').textContent=name;
+  }
+  out.push('engine = Mode 01 group '+groups+' to 7E0; 01A0-01A3 = transmission blocks to 7E1 without switching;',
+           'engine+01A0 switching = one Monitor cycle as the app does it now (4 address commands).','');
+  res.forEach(([n,ms])=>out.push(n+': '+ms.toFixed(0)+' ms each ('+(1000/ms).toFixed(1)+'/s)'));
+  return {text:out.join('\n'), summary: res.map(([n,ms])=>n+' '+(1000/ms).toFixed(1)+'/s').join(' · ')};
+}
+// Phone mount check: how much the phone shakes at idle (a loose mount blurs the deceleration readings).
+async function runMountCheck(api){
+  motionOn();
+  api.show('Engine idling, car still, nobody touching the phone. Measuring for 15 seconds.');
+  const t1=performance.now(); await api.wait(15,'measuring');
+  const s=accBuf.filter(x=>x.t>=t1); if(s.length<50) return {text:null, summary:'no phone motion data (motion sensor blocked?).'};
+  const sd=k=>{ const v=s.map(x=>x[k]), m=v.reduce((a,b)=>a+b,0)/v.length; return Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/v.length); };
+  const n=Math.hypot(sd('x'),sd('y'),sd('z')), hz=s.length/((s[s.length-1].t-s[0].t)/1000);
+  const verdict=n<0.06?'rigid, good':n<0.15?'fine':n<0.3?'a bit loose: the decel scores will be noisy':'loose: firm up the mount before relying on the scores';
+  return {text:['Fast OBD Logger phone mount check '+new Date().toISOString(),'samples '+s.length+' at '+hz.toFixed(0)+' Hz','shake (std) x '+sd('x').toFixed(3)+' y '+sd('y').toFixed(3)+' z '+sd('z').toFixed(3)+' total '+n.toFixed(3)+' m/s²','verdict: '+verdict].join('\n'),
+          summary:'shake '+n.toFixed(2)+' m/s² at '+hz.toFixed(0)+' Hz: '+verdict+'.'};
+}
 renderTiles();
 
 // ---- Range scan: read-only service 22 over a span of data IDs ----

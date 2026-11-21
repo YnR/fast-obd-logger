@@ -154,6 +154,17 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
+- Build 2026-11-21-b, Identify tests for faster sampling:
+  - "Listen to the car's own traffic" (parked, engine running, 1 min): adapter monitor (ATH1, ATCRA cleared,
+    STMA; ATMA if STMA hears nothing), 10 s idle then 10 s gentle revving. Nothing is sent to the car. File:
+    frames per ID per phase, distinct payloads, raw frames with ms timestamps (up to 30,000). Headers back off
+    and filters restored afterwards.
+  - "Read speed of each block" (parked): ms per request for the engine Mode 01 group, 01A0-01A3 without
+    switching, and one Monitor cycle with the four address commands.
+  - "Short transmission blocks, revving" (parked) and "..., driving" (4 min): record 01A0-01A3 together to see
+    whether the 10-byte 01A2/01A3 carry turbine speed or slip.
+  - "Phone mount check" (parked, 15 s): phone shake at idle (std, m/s²) and sample rate, with a verdict.
+
 - Build 2026-11-19-a: Sweep mode removed (tabs: Monitor, Identify). The background-sweep card moved to the
   Monitor page and the "other tools" card to Identify. The background sweep now also runs with the engine off
   when the ignition is on and the phone is plugged in (new native AndroidBT.isCharging): within the first
