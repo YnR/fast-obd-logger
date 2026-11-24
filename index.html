@@ -260,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-23-a · converter-clutch command in the lock-up watch</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-24-a · phone motion with the screen off</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -390,12 +390,20 @@ let rxBuf='', pending=null, running=false, connected=false;
 // Every phone motion sample of the last 6 s is kept, so the moments around a converter lock-up or a mark can
 // be written to the log at full rate (group A rows) and scored for how hard the car decelerated.
 const accBuf=[];
-function motionH(ev){ const a=ev.accelerationIncludingGravity; if(a){ const x=+a.x||0,y=+a.y||0,z=+a.z||0, now=performance.now();
+function motionSample(now,x,y,z){
   lastAcc={x:+x.toFixed(2),y:+y.toFixed(2),z:+z.toFixed(2)};
   accBuf.push({t:now,x,y,z}); while(accBuf.length && accBuf[0].t<now-6000) accBuf.shift();
-  joltFeed(x,y,z); } }
-function motionOn(){ if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',motionH); } }
-function motionOff(){ if(window.__motionOn){ window.__motionOn=false; window.removeEventListener('devicemotion',motionH); } }
+  joltFeed(x,y,z,now); }
+function motionH(ev){ if(window.__nativeMotion) return; const a=ev.accelerationIncludingGravity; if(a) motionSample(performance.now(),+a.x||0,+a.y||0,+a.z||0); }
+// From build 2026-11-24-a the Android app reads the accelerometer natively, in batches every 0.1 s, so motion keeps
+// coming with the screen off or another app in front (the web motion events stop then: 2026-11-24 drive had none
+// for the first 344 s). Each sample carries its age in ms at the time the batch is sent.
+window.__acc=function(arr){ const now=performance.now(); window.__nativeMotion=true;
+  for(const s of arr) motionSample(now-s[0], s[1], s[2], s[3]); };
+function motionOn(){ if(!window.__motionOn){ window.__motionOn=true; window.addEventListener('devicemotion',motionH);
+  try{ if(window.AndroidBT && AndroidBT.motionStart) AndroidBT.motionStart(); }catch(e){} } }
+function motionOff(){ if(window.__motionOn){ window.__motionOn=false; window.removeEventListener('devicemotion',motionH);
+  try{ if(window.AndroidBT && AndroidBT.motionStop) AndroidBT.motionStop(); }catch(e){} window.__nativeMotion=false; } }
 let rows=[], latest={}, prevPed=null, dips=0, hist=[], lastGeo={}, lastAcc={}, wakeLock=null, t0=0, geoId=null;
 const enc=new TextEncoder(), dec=new TextDecoder();
 
@@ -825,9 +833,9 @@ function evBase(v){
   if(p.max<15.5) evQueue('coast', rate.toFixed(1)+' mph/s, pedal at rest');
   else if(p.min>=16 && p.max-p.min<=4) evQueue('decel', rate.toFixed(1)+' mph/s, pedal held '+p.min.toFixed(0)+'-'+p.max.toFixed(0)+'%');
 }
-function joltFeed(x,y,z){
+function joltFeed(x,y,z,tAt){
   if(!running || exOnly) return;
-  const now=performance.now(), dt=jolt.t?Math.min(0.2,(now-jolt.t)/1000):0; jolt.t=now;
+  const now=tAt||performance.now(), dt=jolt.t?Math.min(0.2,(now-jolt.t)/1000):0; jolt.t=now;
   if(!jolt.base){ jolt.base=[x,y,z]; return; }
   const k=Math.min(1,dt/1.5); const b=jolt.base; b[0]+=(x-b[0])*k; b[1]+=(y-b[1])*k; b[2]+=(z-b[2])*k;
   const g=Math.hypot(b[0],b[1],b[2])||1, dx=x-b[0], dy=y-b[1], dz=z-b[2], along=(dx*b[0]+dy*b[1]+dz*b[2])/g;

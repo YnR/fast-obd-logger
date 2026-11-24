@@ -154,6 +154,10 @@ finds. The radar and ABS/ESC are of interest for the hesitation: both can reques
 
 ## App behaviour notes
 
+- Build 2026-11-24-a: phone motion read natively (Android accelerometer at about 60 Hz, sent to the page in batches
+  every 0.1 s with each sample's age), so it keeps working with the screen off or another app in front. The web
+  motion events are ignored once native samples arrive.
+
 - Build 2026-11-21-b, Identify tests for faster sampling:
   - "Listen to the car's own traffic" (parked, engine running, 1 min): adapter monitor (ATH1, ATCRA cleared,
     STMA; ATMA if STMA hears nothing), 10 s idle then 10 s gentle revving. Nothing is sent to the car. File:

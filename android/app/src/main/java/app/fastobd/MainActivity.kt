@@ -30,7 +30,7 @@ import java.util.UUID
  * The page talks to the dongle through the AndroidBT object below: classic Bluetooth SPP (RFCOMM).
  * The shell only moves bytes. All OBD logic, and the rule that only read requests are sent, lives in the page.
  */
-class MainActivity : Activity() {
+class MainActivity : Activity(), android.hardware.SensorEventListener {
     companion object {
         // Shared across activity restarts: the background service can keep the process (and an old link) alive.
         @Volatile var socket: BluetoothSocket? = null
@@ -105,6 +105,51 @@ class MainActivity : Activity() {
         } catch (e: Exception) { }
     }
 
+    // ---- accelerometer, read natively so it keeps working with the screen off or another app in front ----
+    private var sensors: android.hardware.SensorManager? = null
+    private val accLock = Any()
+    private val accPending = ArrayList<FloatArray>()          // x, y, z of each sample
+    // sensor timestamps (ns since boot) kept apart so they stay exact
+    private val accTimes = ArrayList<Long>()
+    private val accHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    @Volatile private var accOn = false
+    private val accFlush = object : Runnable {
+        override fun run() {
+            if (!accOn) return
+            val sb = StringBuilder("window.__acc&&__acc([")
+            val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+            synchronized(accLock) {
+                for (i in accPending.indices) {
+                    val v = accPending[i]; val age = (nowNs - accTimes[i]) / 1_000_000.0
+                    if (i > 0) sb.append(',')
+                    sb.append('[').append(String.format(java.util.Locale.US, "%.1f,%.3f,%.3f,%.3f", age, v[0], v[1], v[2])).append(']')
+                }
+                accPending.clear(); accTimes.clear()
+            }
+            sb.append("])")
+            web.evaluateJavascript(sb.toString(), null)
+            accHandler.postDelayed(this, 100)
+        }
+    }
+    override fun onSensorChanged(e: android.hardware.SensorEvent) {
+        synchronized(accLock) { if (accPending.size < 400) { accPending.add(floatArrayOf(e.values[0], e.values[1], e.values[2])); accTimes.add(e.timestamp) } }
+    }
+    override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) { }
+    private fun motionStartNative() {
+        if (accOn) return
+        val sm = getSystemService(SENSOR_SERVICE) as android.hardware.SensorManager
+        val acc = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: return
+        sensors = sm; accOn = true
+        sm.registerListener(this, acc, 16_667)    // about 60 Hz
+        accHandler.postDelayed(accFlush, 100)
+    }
+    private fun motionStopNative() {
+        accOn = false
+        try { sensors?.unregisterListener(this) } catch (e: Exception) { }
+        accHandler.removeCallbacks(accFlush)
+        synchronized(accLock) { accPending.clear(); accTimes.clear() }
+    }
+
     private fun js(code: String) {
         runOnUiThread { web.evaluateJavascript(code, null) }
     }
@@ -116,6 +161,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         selfClose = true
+        motionStopNative()
         try { unregisterReceiver(powerRx) } catch (e: Exception) { }
         try { tts?.shutdown() } catch (e: Exception) { }
         stopService(Intent(this, KeepAliveService::class.java))
@@ -140,6 +186,12 @@ class MainActivity : Activity() {
                 try { web.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } catch (x: Throwable) { }
             }
         }
+
+        @JavascriptInterface
+        fun motionStart() { runOnUiThread { motionStartNative() } }
+
+        @JavascriptInterface
+        fun motionStop() { runOnUiThread { motionStopNative() } }
 
         // Phone plugged in (car USB powered): the background sweep may run with the engine off.
         @JavascriptInterface
