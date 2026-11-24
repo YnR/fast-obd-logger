@@ -260,7 +260,7 @@
 </div>
 
 <div class="card"><div id="log" class="noswipe"></div></div>
-<p style="text-align:center"><small id="ver">build 2026-11-21-d · converter-clutch command in the lock-up watch</small></p>
+<p style="text-align:center"><small id="ver">build 2026-11-23-a · converter-clutch command in the lock-up watch</small></p>
 
 <script id="core">
 // ---------- Pure logic (no DOM) ----------
@@ -875,7 +875,7 @@ function lockScore(L){
     if(P[0].f!=null){
       const base=P.reduce((a,x)=>a+x.f,0)/P.length; let dip=0, at=0, jerk=0;
       W.forEach((x,i)=>{ if(base-x.f>dip){ dip=base-x.f; at=x.t; } if(i){ const j=Math.abs(x.f-W[i-1].f)/((x.t-W[i-1].t)/1000||1); if(j>jerk) jerk=j; } });
-      score='decel dip '+dip.toFixed(2)+' m/s² at '+((at-L.t1)/1000).toFixed(2)+' s; jerk '+jerk.toFixed(0)+' m/s³; phone '+hz.toFixed(0)+' Hz';
+      score=(dip>0?'decel dip '+dip.toFixed(2)+' m/s² at '+((at-L.t1)/1000).toFixed(2)+' s':'no decel dip')+'; jerk '+jerk.toFixed(0)+' m/s³; phone '+hz.toFixed(0)+' Hz';
       if(dip>lockWorst){ lockWorst=dip; const e=$('lockWorst'); if(e) e.textContent=dip.toFixed(2); }
     } else {
       const base=P.reduce((a,x)=>a+x.h,0)/P.length, peak=Math.max(...W.map(x=>x.h));

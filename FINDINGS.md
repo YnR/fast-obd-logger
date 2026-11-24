@@ -449,6 +449,25 @@ Build 2026-11-21-d reads 01A1 as every third read in the lock-up watch (group T1
 tcm_shift_cmd as 5 numbers, tcm_01A1) and adds "clutch command X to Y" to each lock event, so harsh and gentle
 lock-ups can be compared by how hard the clutch was commanded.
 
+## Monitor drive 2026-11-23 17:19 (24.5 min, four marks; phone on a build before 2026-11-21-d, so no 01A1)
+
+Requests median 0.14 s engine, 0.21 s transmission; 60 lock-ups logged, 72 red-light sweep pauses.
+
+- Mark 2 (208.2 s, 7th, 35 mph, pedal steady 30%): converter in controlled slip at 170-190 rpm for 5 s or more
+  (flag 1), then locked in 0.4 s at 206.5-206.9 (slip 181, 104, 32, 6; engine 1341 to 1191 rpm). Mark 1.3-1.7 s
+  after the lock started.
+- Mark 3 (243.6 s, 8th, 44 mph, pedal steady 32%): same pattern, slip 160-185 for 4 s, then 164 to -8.5 within one
+  reading at 242.1-242.75 (engine 1394 to 1233 rpm). Mark 0.9-1.5 s after.
+- Mark 1 (53.0 s, 24 mph): at the end of a 4-5 upshift (requested 50.9, done 52.4) with the converter slipping
+  50-130 rpm; slip rose back to 140-165 right after. Forward axis not learnt yet at that point.
+- Mark 4 (1456.0 s): parked, engine off. Not a driving event (phone handled?).
+- Felt versus not felt: six lock-ups in this drive match marks 2 and 3 (5th-8th gear, pedal steady 22-32%,
+  slip 100-210 rpm to locked). Only 2 of them were marked. By slip before, fall rate (rpm/s), engine-speed drop
+  (110-240 rpm), phone decel dip (0.3-0.7 m/s²), vibration or pedal easing afterwards, the felt ones do not
+  stand out. The phone's dips at lock-up are all close to its noise; it cannot tell felt from unfelt ones here.
+- So the clearest description of the symptom so far: steady light throttle in 7th or 8th at 30-45 mph, the
+  converter holding about 170 rpm of controlled slip and then locking fully within half a second.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
