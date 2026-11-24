@@ -468,6 +468,27 @@ Requests median 0.14 s engine, 0.21 s transmission; 60 lock-ups logged, 72 red-l
 - So the clearest description of the symptom so far: steady light throttle in 7th or 8th at 30-45 mph, the
   converter holding about 170 rpm of controlled slip and then locking fully within half a second.
 
+## Monitor drive 2026-11-24 07:10 (9.3 min, one mark; build 2026-11-23-a, first drive with the clutch command)
+
+The mark (343.7 s, 7th, 30-35 mph) sits on the most violent converter event of the drive, and the clutch
+command (01A1 byte 43) separates it from the rest:
+- 336-337 s: coasting in 7th with the converter locked (slip about 0), foot from 15% to 30%.
+- 337.9-339.0 s: the converter let go under the tip-in: slip 71, 336, 423, 532, 585 rpm, engine 1014 to 1647 rpm
+  at 31 mph, with the clutch command at only 109-120.
+- 340.3-341.2 s: command raised to 158-163, slip 282, 257, 268, then 268 to -81 rpm in one reading (0.19 s):
+  engine 1409 to 1078 rpm. Fastest slip fall of the drive, 1926 rpm/s (no other lock-up above 654), with
+  overshoot. Command 168 just after.
+- 342.5-343.3 s: command back to 87, foot fully off at 343.2, slip 124 and 227, re-locked to -23.5 at 343.27.
+- Mark at 343.69: 2.4 s after the hard clamp and 0.4 s after the second re-lock (foot already off).
+Clutch command over the drive: median 98, 75% under 110, 140+ only here (158-168) and at 283-285 s (142-164,
+followed by a lock-up at 287.8 with the foot off, slip 320 to 2, not marked).
+
+Pattern: tip-in from a locked coast, converter clutch slips far (flare to about 585 rpm), the transmission then
+clamps it hard (command 160+), slip collapses with overshoot. LIKELY the felt event.
+
+Phone motion was missing until 343.9 s (first sample right after the tap): the sensor delivers nothing while the
+screen is off, so the phone scores are absent for most of the drive.
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
