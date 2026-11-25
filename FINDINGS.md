@@ -493,6 +493,25 @@ clamps it hard (command 160+), slip collapses with overshoot. LIKELY the felt ev
 Phone motion was missing until 343.9 s (first sample right after the tap): the sensor delivers nothing while the
 screen is off, so the phone scores are absent for most of the drive.
 
+## Monitor drive 2026-11-24 17:13 (10.5 min, three marks; build 2026-11-24-a) and the clutch-command pattern
+
+Native phone motion works: phone data from 0.2 s, 30 of 35 lock-ups scored. Requests median 0.14 s engine,
+0.25 s transmission.
+
+All three marks follow a lock-up whose converter-clutch command (01A1 byte 43) peaked at 130 or more in the 3 s
+before it locked: 225.9 s (7th, pedal 30%, 139), 278.7 s (8th, 29%, 147, overshoot -27), 416.1 s (4th, 33%, 145,
+overshoot -25). Marks 0.5-1.9 s after the lock. Phone dips at these were only 0.17-0.26 m/s², no larger than at
+unmarked lock-ups, so the phone still does not separate them.
+
+Both 2026-11-24 drives together: 54 lock-ups. Clutch command peak 130+ before 7 of them; 4 of those 7 were marked.
+None of the 47 lock-ups with a peak under 130 was marked. The three unmarked 130+ ones: 286.6 s (morning, foot off,
+164), 14.6 s (evening, first 15 s of the drive, pedal 48%, 152) and 102.7 s (evening, 134). Typical command while
+locked or applying: 85-125.
+
+CONFIRMED (two drives, 4 of 4 marks): the felt jolt is a converter lock-up that the transmission applies with a
+high clutch command (130-170 against a usual 85-125), at light steady throttle, often after a long stretch of
+controlled slip or a flare on tip-in, often with overshoot (slip going negative).
+
 ## Other computers: background sweep finds
 
 | Module | ID | Reply (after 62 + ID) | Notes |
